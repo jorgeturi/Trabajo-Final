@@ -1,0 +1,27 @@
+
+================== Muse Status ==================
+  Muse Hardware:         18.0.0
+  Muse Firmware:         7.2.5
+  Muse Firmware type:    Consumer
+  Muse Bootloader:       7.2.5
+  Build No:              45
+  BT Mac Address:        000666705E54
+  BT Firmware:           Ver 5.45 IAP 10
+  Serial:                1180-UWPA-5E54
+  Preset:                14
+  Filters Enabled:       true
+    - Notch Frequency:   60Hz
+  Accelerometer Enabled: true
+  EEG Sample Frequency:  3520Hz
+  EEG Output Frequency:  220Hz
+  EEG Samples Bitwidth:  10
+  EEG Channel Count:     4
+  EEG Channel Layout:    TP9 FP1 FP2 TP10
+  Downsampling:          16
+  Output Mode:           SEROUT_COMPRESS
+=================================================
+
+
+
+
+bits/second: 8402       receiving at: 219.88Hz          dropped samples: 0
