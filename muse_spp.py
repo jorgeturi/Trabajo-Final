@@ -1,36 +1,45 @@
-import socket
-import sys
+import serial
+import time
 
-# La dirección física exacta de tu diadema Muse v1
-MAC_ADDRESS = "00:06:66:70:5E:54"
-PORT = 1  # Canal estándar para SPP
+PUERTO_COM = "COM3" 
+BAUDRATE = 115200 
 
-print(f"Iniciando conexión directa RFCOMM a {MAC_ADDRESS}...")
+print(f"Abriendo puente serial Bluetooth en {PUERTO_COM}...")
 
 try:
-    # Creamos un socket nativo de Bluetooth
-    sock = socket.socket(socket.AF_BTH, socket.SOCK_STREAM, socket.BTPROTO_RFCOMM)
-    sock.connect((MAC_ADDRESS, PORT))
+    puerto = serial.Serial(PUERTO_COM, BAUDRATE, timeout=1)
+    print("¡Conexión establecida!")
     
-    print("¡Conexión de radiofrecuencia establecida exitosamente!")
-    print("Escuchando flujo de bytes crudos... Presioná Ctrl+C para salir.\n")
+    # 1. Comando de Inicio (Abre la canilla de datos)
+    print("Enviando comando de inicio (Start)...")
+    puerto.write(b's\n') 
+    
+    # Temporizador para el Heartbeat
+    ultimo_latido = time.time()
+
+    print("Escuchando flujo de datos... Presioná Ctrl+C para salir.\n")
 
     while True:
-        # Leemos un bloque de la trama serial
-        raw_data = sock.recv(32)
+        tiempo_actual = time.time()
         
-        if not raw_data:
-            break
-        
-        # Convertimos el tren de bytes a un formato Hexadecimal legible
-        hex_stream = " ".join(f"{b:02X}" for b in raw_data)
-        print(f"RX: {hex_stream}")
+        # 2. El Heartbeat: Enviamos 'k\n' cada 3 segundos
+        if tiempo_actual - ultimo_latido > 3.0:
+            puerto.write(b'k\n')
+            ultimo_latido = tiempo_actual
+            
+        # 3. Lectura continua
+        if puerto.in_waiting > 0:
+            raw_data = puerto.read(puerto.in_waiting)
+            hex_stream = " ".join(f"{b:02X}" for b in raw_data)
+            print(f"RX: {hex_stream}")
 
-except OSError as e:
-    print(f"Error del socket Bluetooth: {e}")
-    print("Verificá que el Muse esté encendido, emparejado a Windows y sin el muse-io corriendo.")
+except serial.SerialException as e:
+    print(f"\n❌ Error del Puerto Serie: {e}")
 except KeyboardInterrupt:
     print("\nDeteniendo captura...")
 finally:
-    sock.close()
-    print("Puerto serial cerrado.")
+    if 'puerto' in locals() and puerto.is_open:
+        # Buena práctica: Enviamos el comando Halt ('h') para dormir la diadema antes de cerrar
+        puerto.write(b'h\n')
+        puerto.close()
+        print("Puerto serial cerrado y diadema en reposo.")
