@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 
-ARCHIVO_CSV = "dataset_cejas_1788552444.csv" # Reemplaza con tu archivo real
+ARCHIVO_CSV = "dataset_cejas_1788634723.csv" # Reemplaza con tu archivo real
 
 def auditar_banda_ancha(csv_path):
     print("==================================================")
