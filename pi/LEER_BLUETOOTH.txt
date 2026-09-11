@@ -1,0 +1,17 @@
+=== CONFIGURACIÓN BLUETOOTH MANUAL (Hacer solo 1 vez por placa) ===
+
+La diadema Muse v1 requiere emparejamiento manual antes de que los 
+scripts de Python puedan conectarse.
+
+1. Mantener presionado el botón de la Muse hasta que las luces parpadeen.
+2. En la terminal de la Raspberry Pi, ejecutar: bluetoothctl
+3. Dentro de la consola de bluetooth, ejecutar estos comandos:
+   a) agent on
+   b) default-agent
+   c) scan on
+4. Esperar a que aparezca la Muse y anotar su dirección MAC (ej: 00:55:DA:xx:xx:xx).
+5. Frenar el escaneo: scan off
+6. Emparejar: pair [DIRECCIÓN_MAC]
+7. Confiar (CRÍTICO): trust [DIRECCIÓN_MAC]
+8. Salir: quit
+====================================================================
