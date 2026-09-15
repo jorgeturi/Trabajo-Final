@@ -6,7 +6,7 @@ from pyqtgraph.Qt import QtCore, QtWidgets
 # ==========================================
 # 1. CONFIGURACIÓN DE RED (ZMQ)
 # ==========================================
-IP_RASPBERRY = "10.42.0.127"
+IP_RASPBERRY = "192.168.1.50"
 context = zmq.Context()
 sock = context.socket(zmq.SUB)
 sock.connect(f"tcp://{IP_RASPBERRY}:5555")

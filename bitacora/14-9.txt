@@ -1,0 +1,44 @@
+decidí separar en publicador subscriptor para poder mostrar la data a diferentes users
+instale librerías para hacer prueba
+
+Una vez que tengas el entorno activo (vas a ver (tfg) al principio de la línea de comandos), tenés que instalar las tres librerías clave que charlamos para armar el nodo de procesamiento y comunicación.
+
+Ejecutá este comando:
+pip install python-osc pyzmq scipy
+
+¿Para qué es cada una?
+python-osc: Es la que va a capturar los datos crudos que está disparando Muse-IO en el puerto 5000 (127.0.0.1).
+
+pyzmq: Es la de ZeroMQ, la que usamos para "gritar" (publicar) el JSON limpio a la red para que tu PC lo atrape al vuelo.
+
+scipy: Es la bestia matemática. La necesitamos para aplicar los filtros DSP (como el Butterworth) a la señal de EEG antes de enviarla.
+
+
+
+
+
+1. El choque de hilos y la implementación del Lock (Semáforo)
+El problema: El sistema colapsó arrojando un error crítico interno de C++ en ZeroMQ (Assertion failed: refs_ >= 0). Esto ocurrió porque el servidor OSC estaba operando en modo multihilo (Threading). Al procesar las ondas cerebrales (EEG a 220 Hz) y los movimientos de la cabeza (IMU a 50 Hz) en paralelo, dos hilos intentaron publicar un paquete JSON por el mismo puerto TCP (5555) en el exacto mismo milisegundo, provocando una colisión en la memoria.
+
+La solución: Se integró la librería threading y se creó un objeto Lock (un candado lógico). Al envolver las instrucciones de publicación (zmq_socket.send_json) dentro del bloque with zmq_lock:, se obligó a los hilos a organizarse en fila. Ahora, si un hilo está transmitiendo, el otro espera una fracción de milisegundo, garantizando que ZeroMQ maneje un solo envío a la vez y logrando una estabilidad absoluta sin crasheos.
+
+2. El diezmado de la señal (%) y el equilibrio de recursos
+El problema original: Para evitar que la CPU de la Raspberry Pi se saturara al 100%, inicialmente aplicamos un diezmado estricto usando contador_muestras % 10 == 0. Esto redujo la tasa de transmisión de 220 Hz a 22 Hz. Aunque salvó el procesador (bajando el uso al 35%), causó que la onda en la PC se viera poligonal y "pixelada", ya que faltaban puntos de información intermedios.
+
+El ajuste óptimo: Modificaste el límite matemático a % 2, configurando el sistema para enviar 1 de cada 2 muestras. Esto elevó la tasa de publicación a 110 Hz.
+
+El resultado: Se alcanzó el punto de equilibrio perfecto (sweet spot) para la arquitectura. La interfaz en la PC ahora recibe la densidad de datos necesaria para dibujar una onda suave e idéntica en forma a la señal cruda, mientras que la Raspberry Pi mantiene un consumo de CPU seguro (entre 35% y 46%) y un Load Average óptimo de ~2.04, trabajando en tiempo real sin cuellos de botella ni riesgo térmico.
+
+
+
+
+
+Saturación del Kernel en Modo Access Point (AP)
+
+Síntoma: Al configurar la Raspberry Pi como un Punto de Acceso (AP) inalámbrico utilizando el chip Wi-Fi interno, el sistema experimentó un colapso generalizado: latencia extrema en la consola local, congelamiento del acceso SSH y desconexiones abruptas (Connection reset). Curiosamente, el uso de CPU en htop se mantenía bajo (~35-46%), descartando un cuello de botella por procesamiento de cálculo.
+
+Causa Raíz (Driver y Kernel): El controlador de red del chip Broadcom integrado en la Raspberry Pi sufre de una severa limitación al operar simultáneamente en modo AP y gestionar el enrutamiento de paquetes por software (NAT/DHCP compartido). Esto provoca una saturación en las colas de interrupciones del kernel de Linux (softirq bloat), lo que bloquea las prioridades de E/S del sistema operativo y afecta la respuesta de la terminal local y las sesiones remotas.
+
+Factor Acelerador de Inestabilidad: El modo de ahorro de energía activo por defecto en la interfaz inalámbrica (Power Management) suspende la circuitería de la antena durante micro-pausas, destruyendo la estabilidad del enlace TCP y generando cortes repentinos de conexión.
+
+Mitigación y Configuración del AP: Para estabilizar el entorno autónomo del nodo Edge, se implementará el punto de acceso (AP) asegurando la desactivación explícita del ahorro de energía en la tarjeta de red (sudo iwconfig wlan0 power off) para evitar micro-bloqueos en la transmisión de datos del sistema BCI.

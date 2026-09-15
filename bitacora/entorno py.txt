@@ -1,0 +1,4 @@
+source VENT/bin/activate
+tfg en mi caso
+
+source tfg/bin/activate

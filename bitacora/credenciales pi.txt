@@ -1,0 +1,8 @@
+Pi-TuJo
+SSID1
+b8:27:eb:58:fb:a9
+192.168.100.45 
+
+sudo rfcomm connect /dev/rfcomm0 00:06:66:70:5E:54
+
+TuJo HMI contra trabajofinal

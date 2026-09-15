@@ -1,0 +1,77 @@
+conf para que muse confie en pi y conexion
+se instalo pyserial para mandarle datos a la diadema y que arranque 
+
+tuve que instalar
+sudo apt update
+sudo apt install libbluetooth3 libbluetooth-dev -y
+
+tuve que instalar en pc SDK porque rp es 32 bits y el SDK 86, tuve que poner un interprete
+
+
+
+1. El Desafío Inicial: Protocolo Propietario
+El objetivo era leer las ondas cerebrales en tiempo real desde una Muse v1 (MU-01) en una Raspberry Pi 3 mediante Python. La primera hipótesis fue interceptar el puerto serial (/dev/rfcomm0) y decodificar los datos usando el esquema muse.proto (Google Protocol Buffers).
+El problema radicaba en que el protocolo Protobuf solo se utiliza para los archivos de guardado estáticos (.muse). La transmisión en vivo por Bluetooth utiliza un protocolo binario propietario comprimido. Esto hizo obligatoria la utilización del software oficial de la marca: muse-io.
+
+2. El Choque de Arquitecturas (ARM vs x86)
+El SDK oficial (muse-io) es un binario compilado exclusivamente para procesadores Intel/AMD de 32 bits (x86). La Raspberry Pi 3 utiliza una arquitectura radicalmente distinta (ARM). El sistema operativo rechazaba el archivo al instante.
+Para solucionarlo, compilaste desde el código fuente la herramienta Box86, un traductor dinámico capaz de interceptar las llamadas del binario x86 y traducirlas a instrucciones ARM en tiempo real.
+
+3. El Bloqueo del Instalador (El Bypass)
+Al intentar instalar el SDK en la Raspberry Pi con Box86, el archivo .run fallaba de forma silenciosa. El diagnóstico reveló que el instalador era un binario enlazado estáticamente, lo que impedía a Box86 interceptar sus direcciones de memoria segura (SIGSEGV).
+Para sortear esto, aplicaste una extracción cruzada:
+
+Levantaste un contenedor Docker (ubuntu:latest) en Windows.
+
+Habilitaste la arquitectura de 32 bits (i386) e instalaste las librerías base de C (libc6:i386) en el contenedor.
+
+Ejecutaste el instalador allí de forma nativa, extrayendo el binario muse-io limpio, para luego transferirlo a la Raspberry Pi.
+
+4. La Inyección de Dependencias
+Al ejecutar el archivo muse-io extraído mediante Box86 en la Raspberry Pi, el traductor logró arrancar el programa, pero falló al intentar comunicarse con la antena Bluetooth porque no encontraba la librería libbluetooth.so.3 compatible.
+La solución final fue descargar el paquete .deb de Bluetooth específico para la arquitectura i386, extraer únicamente el archivo .so.3 y colocarlo en el mismo directorio que el ejecutable. Box86 detectó la librería inyectada, completando la emulación.
+
+Arquitectura Final Lograda:
+La Muse v1 se conecta por Bluetooth a la Raspberry Pi. Box86 emula muse-io, el cual decodifica el protocolo propietario al vuelo y expone los datos limpios a través de un puerto de red local (UDP 5000) usando el protocolo OSC, listos para ser consumidos por tu script.
+
+
+
+
+
+
+PROBLEMA BLUETOOTH. quise forzar la conexión y usar muse io pero ya manejaba todo 
+
+
+
+
+Lo que ocurrió fue un conflicto de exclusividad de hardware entre el sistema operativo y el software de la diadema.
+
+Para tu bitácora, acá tenés la explicación técnica detallada de por qué fallaba el túnel manual y por qué pasarle la dirección MAC directamente lo solucionó:
+
+1. El error de concepto inicial (El Túnel Serial)
+Al principio, asumimos que muse-io era un programa pasivo. Creíamos que su único trabajo era leer un flujo de texto plano desde un puerto serial (como si fuera un Arduino conectado por USB).
+Bajo esa premisa, usamos los comandos de Linux (rfcomm connect) para que el sistema operativo se encargara de usar la antena Bluetooth, contactar a la Muse, y crear un "tubo" virtual llamado /dev/rfcomm0.
+
+2. El secuestro del recurso (Resource Lock)
+Cuando enviaste el comando rfcomm connect & al segundo plano, el kernel de Linux tomó el control exclusivo del chip Bluetooth de la Raspberry Pi y estableció un enlace ininterrumpido con la diadema.
+En redes y sistemas operativos, esto genera un bloqueo (Lock). Mientras ese túnel exista, ningún otro programa puede usar la antena Bluetooth para hablar con la Muse; la línea da "ocupado".
+
+3. El choque con la Arquitectura de muse-io
+El punto de inflexión fue darnos cuenta de que muse-io no es un programa pasivo. Es un SDK completo que trae integrado su propio motor de gestión Bluetooth (por eso nos había exigido inyectarle la librería libbluetooth.so.3 de Intel mediante Box86).
+Cuando ejecutábamos muse-io --device /dev/rfcomm0, el programa intentaba usar su motor interno para negociar la seguridad y el protocolo directamente con la Muse. Pero al intentarlo, chocaba contra el túnel que Linux ya mantenía abierto de fondo. La antena estaba secuestrada, la Muse no respondía a nuevas peticiones, y el software quedaba atrapado en el bucle eterno de Device to connect to:.
+
+4. La solución elegante (Delegación de Control)
+La solución fue eliminar al intermediario:
+
+Al ejecutar killall rfcomm, destruimos el túnel del sistema operativo y liberamos la antena Bluetooth. La Muse volvió a quedar disponible en el aire.
+
+Al ejecutar box86 ./muse-io --device 00:06:66:70:5E:54, le entregamos el control total al SDK.
+
+Al pasarle la MAC directa en lugar del puerto virtual, muse-io utilizó la librería de Bluetooth emulada para adueñarse de la antena de la Raspberry Pi, buscar a la Muse en el aire, hacer el handshake de seguridad por su cuenta, y comenzar la decodificación de las ondas en un solo movimiento limpio.
+
+Básicamente, pasamos de intentar forzar los datos por una tubería manual, a dejar que el propio motor de Interaxon gestione las capas físicas y de red nativamente a través del emulador.
+
+
+
+
+

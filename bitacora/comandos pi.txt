@@ -1,0 +1,20 @@
+htop (ver recursos) se sale con q
+
+hostname -I ver ip
+cd TFGProyecto
+source tfg/bin/actívate
+phyton stream.py
+
+1. Instalar Git y el manejador de entornos virtuales:
+sudo apt update
+sudo apt install git python3-venv -y
+
+2. Crear la carpeta principal de tu proyecto:
+mkdir BCI-Proyecto
+cd BCI-Proyecto
+
+3. Crear el entorno virtual (la "caja de arena") dentro de esa carpeta:
+python3 -m venv entorno_bci
+
+4. Activar el entorno virtual (vas a ver que el inicio de tu consola cambia):
+source entorno_bci/bin/activate

@@ -1,0 +1,7 @@
+bluetooth se desconectaba por falta de hearthbit o algo asi, ver que era. pero se soluciono
+
+voy a usar rp, no puedo usar micrcontrolador ocmo pensaba
+
+protocolo de buen uso de vincha:
+1) estirar para calzar oídos
+2) achicar y apretar
