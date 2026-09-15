@@ -1,0 +1,4 @@
+router user admin contra 1234
+ip pi 192.168.1.50
+pc 192.168.1.55
+ipconfig para cambiar ip y transmitir
