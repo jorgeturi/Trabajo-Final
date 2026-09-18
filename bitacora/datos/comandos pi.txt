@@ -2,7 +2,7 @@ htop (ver recursos) se sale con q
 
 hostname -I ver ip
 cd TFGProyecto
-source tfg/bin/actívate
+source tfg/bin/activate
 phyton stream.py
 
 1. Instalar Git y el manejador de entornos virtuales:

@@ -1,0 +1,34 @@
+quise establecer y verificar la recepción de datos de telemetría en tiempo real (EEG crudo e IMU) emitidos vía protocolo OSC/UDP desde el nodo edge en la Raspberry Pi (Pi-TuJo) hacia la PC de desarrollo.
+
+AL PARECER CUANDO CAMBIO DE RED Y VUELVO PIERDO LA CONEXION UDP Y TENGO QUE REINICIAR TODO
+
+Problema inicial: Durante las pruebas preliminares, los scripts receptores ejecutados en la PC (puerto 5000) no registraban tráfico entrante (Paquetes: 0), evidenciando una desconexión o bloqueo en la capa de transporte UDP.
+
+Acciones Realizadas y Resolución:
+Aislamiento de la Capa de Red (Socket Puro):
+
+Se desarrolló un script de diagnóstico de bajo nivel utilizando sockets UDP nativos (socket.AF_INET y socket.SOCK_DGRAM) para descartar que el filtrado de la biblioteca pythonosc estuviera descartando tramas con cabeceras no mapeadas.
+
+Se corroboró que el emisor en la Raspberry Pi (192.168.1.50) estaba transmitiendo correctamente hacia la IP de la estación de trabajo (192.168.1.33), pero el servidor receptor local no capturaba los datagramas.
+
+Corrección de la Interfaz de Escucha (Bind):
+
+Causa raíz: El servidor socket en la PC estaba enlazado a la interfaz de bucle local (127.0.0.1), ignorando el tráfico externo proveniente de la red de área local (LAN).
+
+Modificación: Se reconfiguró el enlace de red del servidor para escuchar en todas las interfaces disponibles (0.0.0.0), permitiendo la correcta recepción de los paquetes traspasados por la red física.
+
+Mapeo y Auditoría del Flujo OSC ("Modo Omnívoro"):
+
+Implementando un despachador genérico de eventos OSC, se logró auditar el catálogo completo de rutas emitidas por el ecosistema de la diadema Muse v1 y el nodo edge. Se identificaron y documentaron los endpoints activos:
+
+EEG Crudo: /muse/eeg (4 canales a 220 Hz: TP9, FP1, FP2, TP10).
+
+Telemetría IMU: /muse/acc (Acelerómetro de 3 ejes).
+
+Calidad de Contacto: /muse/elements/horseshoe (Métricas de impedancia por electrodo).
+
+Algoritmos y Eventos: Rutas secundarias de FFTs parciales, detección de parpadeos (/muse/elements/blink) y tensión de mandíbula (/muse/elements/jaw_clench).
+
+Validación del Sistema:
+
+Con el enlace UDP estabilizado y el filtrado de rutas activo, se confirmó un flujo continuo de paquetes sin pérdida apreciable, permitiendo habilitar la fase de registro estructurado de datos crudos (raw data) orientada al entrenamiento de modelos.
