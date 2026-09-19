@@ -1,0 +1,2 @@
+el apretar espacio cuando hago el gesto no sirve.
+tengo que hacer apretar hacer el gesto esperar y soltar para contemplar cambios luego del gesto

@@ -9,7 +9,7 @@ import os
 # 1. CONFIGURACIÓN DEL ANÁLISIS
 # ==========================================
 # Busca el último CSV generado o escribe el nombre directo
-archivos = glob.glob("dataset_cerrar ambos ojos_1789840274.csv")
+archivos = glob.glob("dataset_cejas_1789840016.csv")
 if not archivos:
     print("❌ No se encontraron archivos CSV que comiencen con 'dataset_'.")
     exit()
@@ -232,3 +232,129 @@ if mask_gestos.any():
         print("⚠️ Los segmentos de gestos juntos son muy cortos para calcular el espectro con Welch.")
 else:
     print("⚠️ No hay datos con Trigger == 1 en la franja seleccionada para calcular el espectro de gestos.")
+
+
+
+
+
+
+
+# ==========================================
+# 10. DETECCIÓN ESTRICTA MUESTRA A MUESTRA (Sin desfasajes)
+# ==========================================
+from scipy.ndimage import label
+
+ventana_baseline = int(FS * 2)
+PERIODO_REFRACTARIO = int(FS * 0.15) # 500ms de bloqueo anti-rebote
+
+# Márgenes independientes por canal
+MARGENES_UMBRAL = {
+    'FP1': 150.0,
+    'FP2': 150.0,
+    'TP9': 30.0,
+    'TP10': 30.0
+}
+
+baseline_ch = {}
+desplazamiento_ch = {}
+supera_ch = {}
+umbrales_sup = {}
+umbrales_inf = {}
+
+for ch in CANALES:
+    sig_c = df_filtrado[ch + '_fil'] - df_filtrado[ch + '_fil'].mean()
+    baseline_ch[ch] = sig_c.rolling(window=ventana_baseline, center=True, min_periods=1).mean()
+    desplazamiento_ch[ch] = np.abs(sig_c - baseline_ch[ch])
+    supera_ch[ch] = desplazamiento_ch[ch] > MARGENES_UMBRAL[ch]
+    
+    umbrales_sup[ch] = baseline_ch[ch] + MARGENES_UMBRAL[ch]
+    umbrales_inf[ch] = baseline_ch[ch] - MARGENES_UMBRAL[ch]
+
+# REGLA LÓGICA ESTRICTA MUESTRA A MUESTRA (Sin expansiones ni desfasajes)
+# Se exige que al menos un frontal Y al menos un temporal superen el umbral en la misma muestra exacta.
+frontal_ok = supera_ch['FP1'] | supera_ch['FP2']
+temporal_ok = supera_ch['TP9'] | supera_ch['TP10']
+deteccion_cruda = frontal_ok & temporal_ok
+
+# Aplicar Período Refractario (Anti-rebote)
+deteccion_global = np.zeros_like(deteccion_cruda, dtype=bool)
+ultimo_disparo = -9999
+
+for idx_m in range(len(deteccion_cruda)):
+    if deteccion_cruda.iloc[idx_m]:
+        if (idx_m - ultimo_disparo) > PERIODO_REFRACTARIO:
+            deteccion_global[idx_m] = True
+            ultimo_disparo = idx_m
+
+# ==========================================
+# 11. EVALUACIÓN ESTRICTA (TP DENTRO DEL FLAG, FP FUERA)
+# ==========================================
+trigger_array = (df_franja['Trigger'] == 1).values
+trigger_blocks, num_gestos_reales = label(trigger_array)
+
+tp_count = 0
+fn_count = 0
+
+for i in range(1, num_gestos_reales + 1):
+    block_mask = (trigger_blocks == i)
+    if deteccion_global[block_mask].any():
+        tp_count += 1
+    else:
+        fn_count += 1
+
+fuera_de_trigger = ~trigger_array
+fp_mascara = deteccion_global & fuera_de_trigger
+_, num_fps = label(fp_mascara.astype(int))
+
+print("\n==========================================")
+print("📊 RESULTADOS CON LÓGICA ESTRICTA MUESTRA A MUESTRA")
+print(f"==========================================")
+print(f"Gestos reales (Triggers):          {num_gestos_reales}")
+print(f"Verdaderos Positivos (DENTRO):     {tp_count}")
+print(f"Falsos Negativos (No detectados):  {fn_count}")
+print(f"Falsos Positivos (Flasas alarmas): {num_fps}")
+print("==========================================")
+
+
+# ==========================================
+# 12. PLOT 6: VISUALIZACIÓN CLARA
+# ==========================================
+fig, axes = plt.subplots(len(CANALES), 1, figsize=(12, 10), sharex=True)
+
+for i, ch in enumerate(CANALES):
+    ax = axes[i]
+    
+    sig_c = df_filtrado[ch + '_fil'] - df_filtrado[ch + '_fil'].mean()
+    ax.plot(df_franja['Tiempo_s'], sig_c, label=f'{ch} Señal', color='royalblue', alpha=0.6, linewidth=1)
+    ax.plot(df_franja['Tiempo_s'], baseline_ch[ch], label=f'{ch} Base Móvil', color='magenta', linestyle=':', linewidth=1)
+    
+    ax.plot(df_franja['Tiempo_s'], umbrales_sup[ch], color='darkorange', linestyle='--', linewidth=1.2, label=f'Umbral (±{MARGENES_UMBRAL[ch]}µV)' if i == 0 else "")
+    ax.plot(df_franja['Tiempo_s'], umbrales_inf[ch], color='darkorange', linestyle='--', linewidth=1.2)
+    
+    if trigger_array.any():
+        ylim_bottom, ylim_top = ax.get_ylim()
+        ax.fill_between(df_franja['Tiempo_s'], ylim_bottom, ylim_top, 
+                         where=trigger_array, color='red', alpha=0.1, label='Trigger Real (Gesto)' if i == 0 else "")
+        
+    # Puntos amarillos: cuando ESTE canal supera su umbral de forma individual
+    ch_sup = supera_ch[ch]
+    if ch_sup.any():
+        ax.scatter(df_franja['Tiempo_s'][ch_sup], sig_c[ch_sup], color='gold', s=20, zorder=4, label='Supera Umbral' if i == 0 else "")
+
+    # Detección Global Válida (Se dibuja arriba como triángulo verde cuando la condición estricta se cumple)
+    if deteccion_global.any():
+        tiempos_validados = df_franja['Tiempo_s'][deteccion_global]
+        y_top_pos = ylim_top * 0.8 if 'ylim_top' in locals() else 50
+        ax.scatter(tiempos_validados, [y_top_pos] * len(tiempos_validados), color='limegreen', marker='v', s=60, zorder=6, label='Detección Global Válida' if i == 0 else "")
+
+    ax.set_title(f"Canal {ch}")
+    ax.set_ylabel("Amplitud (µV)")
+    ax.grid(True, linestyle='--', alpha=0.5)
+    
+    if i == 0:
+        ax.legend(loc='upper right', fontsize='small')
+
+plt.xlim(TIEMPO_INICIO, TIEMPO_FIN)
+plt.xlabel("Tiempo (segundos)")
+plt.tight_layout()
+plt.show()
