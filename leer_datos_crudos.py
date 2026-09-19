@@ -9,7 +9,7 @@ import os
 # 1. CONFIGURACIÓN DEL ANÁLISIS
 # ==========================================
 # Busca el último CSV generado o escribe el nombre directo
-archivos = glob.glob("dataset_cejas_1789840016.csv")
+archivos = glob.glob("dataset_levantarcejas_1789859241.csv")
 if not archivos:
     print("❌ No se encontraron archivos CSV que comiencen con 'dataset_'.")
     exit()
@@ -249,10 +249,10 @@ PERIODO_REFRACTARIO = int(FS * 0.15) # 500ms de bloqueo anti-rebote
 
 # Márgenes independientes por canal
 MARGENES_UMBRAL = {
-    'FP1': 150.0,
-    'FP2': 150.0,
-    'TP9': 30.0,
-    'TP10': 30.0
+    'FP1': 250.0,
+    'FP2': 250.0,
+    'TP9': 200.0,
+    'TP10': 200.0
 }
 
 baseline_ch = {}
