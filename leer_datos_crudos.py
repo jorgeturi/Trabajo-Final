@@ -114,12 +114,12 @@ plt.show()
 # ==========================================
 # 6. FILTRADO: Pasa-bandas ajustado (2.0 Hz a 20.0 Hz)
 # ==========================================
-lowcut = 2.0   # Sube de 1Hz a 2Hz para cortar latidos (~1.2Hz) y parpadeos/derivas lentas
-highcut = 10.0 # Baja de 30Hz a 20Hz para eliminar espasmos musculares muy abruptos
+lowcut = 1.5   # Sube de 1Hz a 2Hz para cortar latidos (~1.2Hz) y parpadeos/derivas lentas
+highcut = 40.0 # Baja de 30Hz a 20Hz para eliminar espasmos musculares muy abruptos
 nyq = FS / 2.0
 
 # Crear filtro Butterworth pasa-bandas de orden 4
-b_bp, a_bp = signal.butter(4, [lowcut / nyq, highcut / nyq], btype='band')
+b_bp, a_bp = signal.butter(8, [lowcut / nyq, highcut / nyq], btype='band')
 
 df_filtrado = df_franja.copy()
 for ch in CANALES:

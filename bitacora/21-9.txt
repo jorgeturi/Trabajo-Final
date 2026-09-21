@@ -1,0 +1,31 @@
+Se evaluó el comportamiento de diferentes órdenes en filtros digitales/analógicos Butterworth (desde orden 1 hasta orden 16) con el objetivo de determinar el balance óptimo entre la selectividad en frecuencia (pendiente de atenuación) y la integridad de la señal en el tiempo (distorsión de fase y transitorios).
+
+2. Pruebas y Resultados por Orden
+Filtro de Orden 1 (Atenuación: 6 dB/octava):
+
+Prueba: Filtrado básico de baja exigencia.
+
+Resultado: Transición muy suave y gradual. Prácticamente no introduce distorsión de fase ni retrasos notables, pero es inútil si se necesita separar frecuencias ruidosas que estén cerca de la frecuencia de corte.
+
+Filtro de Orden 2 (Atenuación: 12 dB/octava):
+
+Prueba: Configuración estándar de referencia.
+
+Resultado: Excelente equilibrio. Ofrece una caída razonable manteniendo una buena preservación de la forma de onda temporal y estabilidad numérica.
+
+Filtros de Orden 4 y Orden 9 (Atenuaciones: 24 dB/octava y 54 dB/octava):
+
+Prueba: Casos de alta exigencia para aislar componentes de frecuencia muy próximos.
+
+Resultado: Caídas agresivas y muy efectivas. El orden 4 (par) ofrece un comportamiento predecible y limpio, mientras que el orden 9 (impar) introduce un polo real que modifica ligeramente la respuesta de fase, requiriendo implementación en cascada (bicuads) para evitar problemas numéricos.
+
+Filtro de Orden 16 (Atenuación: 96 dB/octava):
+
+Prueba: Extremo superior de selectividad (muro de frecuencia).
+
+Resultado: Fallido para uso general. Aunque la atenuación es drástica, la alta sensibilidad a los errores de redondeo numérico provocó inestabilidad en el sistema, acompañada de una distorsión temporal severa y efectos de oscilación (ringing) en los cambios de la señal.
+
+3. Conclusiones para el Proyecto
+Se descartan los órdenes extremos (1 por insuficiente, 16 por inestable y ruidoso).
+
+Se seleccionarán órdenes moderados (2 o 4) como primera opción para priorizar la estabilidad y la forma de la señal, reservando órdenes superiores (como el 9) únicamente si las restricciones de frecuencia en el dominio espectral lo exigen de manera estricta.
