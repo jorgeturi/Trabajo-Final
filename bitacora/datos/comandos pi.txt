@@ -5,6 +5,10 @@ cd TFGProyecto
 source tfg/bin/activate
 phyton stream.py
 
+
+"Podés monitorear los logs en tiempo real con:"
+echo "sudo journalctl -u muse.service -f"
+
 1. Instalar Git y el manejador de entornos virtuales:
 sudo apt update
 sudo apt install git python3-venv -y

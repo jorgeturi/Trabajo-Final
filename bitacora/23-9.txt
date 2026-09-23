@@ -1,0 +1,17 @@
+==================================================
+ BITÁCORA DE DESARROLLO - PROYECTO BCI (TuJo)
+==================================================
+
+1. ARQUITECTURA GENERAL
+- Raspberry Pi (Nodo Edge): Recibe datos crudos de la vincha Muse, aplica un filtro pasa-banda Butterworth (8-30 Hz) en 4 canales EEG, procesa el acelerómetro (IMU) y publica todo en formato JSON mediante ZeroMQ (ZMQ PUB en puerto 5555).
+- PC (Estación de Monitoreo): Se conecta como suscriptor (ZMQ SUB) para visualizar gráficos en tiempo real usando PyQtGraph.
+
+2. PROCESAMIENTO DEL IMU Y FILTRADO
+- Se descubrió que el acelerómetro no usa valores normalizados de -1 a 1, sino una escala de 0 a 1000+.
+- Se implementó un filtro exponencial (EMA) para suavizar las señales y eliminar "ruido", temblores o cambios abruptos (como estornudos).
+- Tras pruebas físicas, se mapearon los ejes: el Eje X controla el movimiento vertical (arriba/abajo) y el Eje Z controla el movimiento horizontal (inclinación lateral), logrando un control de puntero 2D fluido.
+
+3. PROBLEMA Y SOLUCIÓN CRÍTICA: RED Y TCP (ZMQ)
+- El Problema: Al cambiar de red Wi-Fi con la PC, la dirección IP de la Raspberry dejaba de ser alcanzable. El enlace TCP se rompía y el cliente se quedaba colgado sin recibir datos, aunque la Raspberry seguía transmitiendo.
+- La Solución en la PC: Se agregaron tiempos de espera (timeouts) y sistemas de reconexión automática en el código del suscriptor.
+- La Solución en la Raspberry (Clave): Se aisló el envío de datos con bloques de protección (try/except). Así, si la PC se desconecta o cambia de red, la Raspberry Pi NUNCA se rompe ni se congela; sigue publicando de forma autónoma a la espera de que la PC vuelva a conectarse.
