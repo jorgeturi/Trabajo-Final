@@ -1,0 +1,6 @@
+Corrección de ubicación del servicio: Se trasladó el archivo stream.service a la ruta oficial del sistema operativo (/etc/systemd/system/) para que systemd pueda detectarlo y gestionarlo correctamente. 
+  Automatización de inicio: Se activó el arranque automático de ambos servicios (muse.service y stream.service) usando el comando systemctl enable.  
+ Resultado: Ahora, al encender la Raspberry Pi, la vincha se conecta de forma autónoma y el script de Python con el entorno virtual arranca solo en segundo plano.  
+
+
+hay cortes pero al parecer son por la red... hay que ver como actuar ahi

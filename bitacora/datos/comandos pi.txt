@@ -6,6 +6,10 @@ source tfg/bin/activate
 phyton stream.py
 
 
+Reiniciar el servicio manualmente (si hacés cambios en stream.py):
+sudo systemctl restart muse.service
+
+
 "Podés monitorear los logs en tiempo real con:"
 echo "sudo journalctl -u muse.service -f"
 
