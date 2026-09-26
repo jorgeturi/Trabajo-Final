@@ -18,64 +18,80 @@ sock.setsockopt_string(zmq.SUBSCRIBE, "")
 app = QtWidgets.QApplication(sys.argv)
 pg.setConfigOptions(antialias=True)
 
-win = pg.GraphicsLayoutWidget(show=True, title="BCI TuJo - Simulador de Mouse con Ejes Ajustados")
+win = pg.GraphicsLayoutWidget(show=True, title="BCI TuJo - Simulador de Puntero Definitivo")
 win.resize(900, 850)
 
-badge_label = win.addLabel("Calibrando centro... Mantén la cabeza neutral.", size="13pt", color="w")
+badge_label = win.addLabel("Calibrando centro... Mantén la cabeza neutral unos segundos.", size="13pt", color="w")
 win.nextRow()
 
-p_plot = win.addPlot(title="Simulador de Mouse (X = Vertical / Z = Horizontal)")
+p_plot = win.addPlot(title="Simulador de Puntero 2D (Inclinaciones Limpias)")
 p_plot.showGrid(x=True, y=True, alpha=0.4)
-p_plot.setXRange(-300, 300)
-p_plot.setYRange(-300, 300)
+p_plot.setXRange(-400, 400)
+p_plot.setYRange(-400, 400)
 
 puntero = p_plot.plot(pen=None, symbol='o', symbolPen='c', symbolBrush='b', symbolSize=30)
 rastro = p_plot.plot(pen=pg.mkPen(color=(0, 200, 255, 120), width=3))
 
 # Variables de calibración y suavizado
-x_centro = None
-z_centro = None
+centro_x = None
+centro_y = None
+centro_z = None
+
 pos_x_suave = 0.0
 pos_y_suave = 0.0
-ALFA = 0.12  # Factor de suavizado (anti-vibración / estornudos)
+ALFA = 0.12         # Factor de suavizado (filtro contra ruido o movimientos bruscos)
+SENSIBILIDAD = 2.0  # Ajuste de velocidad del puntero
+DEADZONE = 15.0     # Zona muerta central para evitar temblores en reposo
 
 hist_x = []
 hist_y = []
 
 def actualizar():
-    global x_centro, z_centro, pos_x_suave, pos_y_suave
-    raw_x, raw_z = None, None
+    global centro_x, centro_y, centro_z, pos_x_suave, pos_y_suave
+    raw_x, raw_y, raw_z = None, None, None
     
     try:
         while True:
             msg = sock.recv_json(flags=zmq.NOBLOCK)
             if msg.get("tipo") == "ACC":
-                # Tomamos los valores crudos del acelerómetro
-                raw_x = msg.get("x")
-                raw_z = msg.get("z")
+                raw_x = msg.get("X", msg.get("x", 0.0))
+                raw_y = msg.get("Y", msg.get("y", 0.0))
+                raw_z = msg.get("Z", msg.get("z", 0.0))
     except zmq.Again:
         pass
 
-    if raw_x is not None and raw_z is not None:
-        if x_centro is None or z_centro is None:
-            # Calibramos el centro exacto la primera vez que recibimos datos
-            x_centro = raw_x
-            z_centro = raw_z
-            print(f"🎯 Centro calibrado -> Eje X base: {x_centro:.1f} | Eje Z base: {z_centro:.1f}")
+    if raw_x is not None and raw_y is not None and raw_z is not None:
+        if centro_x is None or centro_y is None or centro_z is None:
+            centro_x = raw_x
+            centro_y = raw_y
+            centro_z = raw_z
+            print(f"🎯 Centro calibrado -> X: {centro_x:.1f} | Y: {centro_y:.1f} | Z: {centro_z:.1f}")
 
-        # --- MAPEO DEFINITIVO SEGÚN TUS PRUEBAS ---
-        # Eje Horizontal del Mouse (Izquierda / Derecha) gobernado por Z (Inclinación lateral)
-        desplazamiento_horizontal = raw_z - z_centro
-        
-        # Eje Vertical del Mouse (Arriba / Abajo) gobernado por X (Cabecear)
-        # Si al subir la cabeza baja, le agregamos un signo menos '-' adelante. Probá quitándolo si queda invertido.
-        desplazamiento_vertical = -(raw_x - x_centro) 
+        # --- MAPEO DE MOVIMIENTO ---
+        # Horizontal: Movido por el eje Z (inclinación lateral hacia los hombros)
+        dx = raw_z - centro_z
+        # Vertical: Movido por el eje X invertido (mirar arriba / abajo)
+        dy = -(raw_x - centro_x)
 
-        # Aplicamos filtro de suavizado exponencial independiente para cada eje
-        pos_x_suave = ALFA * desplazamiento_horizontal + (1 - ALFA) * pos_x_suave
-        pos_y_suave = ALFA * desplazamiento_vertical + (1 - ALFA) * pos_y_suave
+        # Aplicar zona muerta para que en reposo no se mueva solo
+        if abs(dx) < DEADZONE: 
+            dx = 0
+        else: 
+            dx = (dx - DEADZONE if dx > 0 else dx + DEADZONE)
 
-        # Actualizamos el puntero en el plano cartesiano
+        if abs(dy) < DEADZONE: 
+            dy = 0
+        else: 
+            dy = (dy - DEADZONE if dy > 0 else dy + DEADZONE)
+
+        delta_x = dx * SENSIBILIDAD
+        delta_y = dy * SENSIBILIDAD
+
+        # Filtro exponencial de suavizado (EMA)
+        pos_x_suave = ALFA * delta_x + (1 - ALFA) * pos_x_suave
+        pos_y_suave = ALFA * delta_y + (1 - ALFA) * pos_y_suave
+
+        # Actualizar gráfico
         puntero.setData([pos_x_suave], [pos_y_suave])
         
         hist_x.append(pos_x_suave)
@@ -85,15 +101,14 @@ def actualizar():
             hist_y.pop(0)
         rastro.setData(hist_x, hist_y)
 
-        # 📊 Badge superior para ver los valores limpios en tiempo real
         badge_label.setText(
-            f"Z (Inclinación Lateral): {raw_z:.1f}  |  X (Cabeceo): {raw_x:.1f}  <br>  "
-            f"<b>Cursor 2D -> X: {pos_x_suave:+.1f} | Y: {pos_y_suave:+.1f}</b>"
+            f"Crudos -> X: {raw_x:.1f} | Y: {raw_y:.1f} | Z: {raw_z:.1f} <br>"
+            f"<b>Puntero -> X (Horiz/Z): {pos_x_suave:+.1f} | Y (Vert/Inv X): {pos_y_suave:+.1f}</b>"
         )
 
 timer = QtCore.QTimer()
 timer.timeout.connect(actualizar)
-timer.start(16) # 60 FPS fluidos
+timer.start(16) # 60 FPS
 
 if __name__ == '__main__':
     sys.exit(app.exec_())

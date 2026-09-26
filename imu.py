@@ -12,15 +12,14 @@ sock.setsockopt_string(zmq.SUBSCRIBE, "")
 app = QtWidgets.QApplication(sys.argv)
 pg.setConfigOptions(antialias=True)
 
-win = pg.GraphicsLayoutWidget(show=True, title="BCI TuJo - Diagnóstico IMU (Ejes X, Y, Z)")
+win = pg.GraphicsLayoutWidget(show=True, title="BCI TuJo - Diagnóstico IMU Limpio")
 win.resize(1000, 800)
 
-win.addLabel("Monitoreo de Acelerómetro - Todos los Ejes con Filtro Suavizador", size="14pt", color="w")
+win.addLabel("Monitoreo de Acelerómetro - X, Y, Z", size="14pt", color="w")
 win.nextRow()
 
 ejes = ["X", "Y", "Z"]
 colores = [(255, 100, 100), (100, 255, 100), (100, 100, 255)]
-plots = {}
 curves_raw = {}
 curves_smooth = {}
 
@@ -28,17 +27,16 @@ tamano_ventana = 250
 buff_raw = {e: [0] * tamano_ventana for e in ejes}
 buff_smooth = {e: [0] * tamano_ventana for e in ejes}
 prev_smooth = {e: 0.0 for e in ejes}
-ALFA = 0.12 # Factor de suavizado (más bajo = más filtro contra estornudos/vibraciones)
+ALFA = 0.15
 
 for i, e in enumerate(ejes):
     p = win.addPlot(title=f"Acelerómetro - Eje {e}")
     p.showGrid(x=True, y=True, alpha=0.3)
-    p.setYRange(-1.5, 1.5)
+    p.setYRange(0, 1200)
     
     c_raw = p.plot(pen=pg.mkPen(color=(120, 120, 120), width=1, style=QtCore.Qt.DashLine))
     c_smooth = p.plot(pen=pg.mkPen(color=colores[i], width=2))
     
-    plots[e] = p
     curves_raw[e] = c_raw
     curves_smooth[e] = c_smooth
     win.nextRow()
@@ -52,9 +50,9 @@ def actualizar_imu_multi():
         while True:
             msg = sock.recv_json(flags=zmq.NOBLOCK)
             if msg.get("tipo") == "ACC":
-                datos_actuales["X"] = msg.get("x", 0.0)
-                datos_actuales["Y"] = msg.get("y", 0.0)
-                datos_actuales["Z"] = msg.get("z", 0.0)
+                datos_actuales["X"] = msg.get("X", msg.get("x", 0.0))
+                datos_actuales["Y"] = msg.get("Y", msg.get("y", 0.0))
+                datos_actuales["Z"] = msg.get("Z", msg.get("z", 0.0))
                 actualizado = True
     except zmq.Again:
         pass
@@ -62,7 +60,6 @@ def actualizar_imu_multi():
     if actualizado:
         for e in ejes:
             val_raw = datos_actuales[e]
-            # Filtro exponencial (EMA) para evitar saltos bruscos
             val_smooth = ALFA * val_raw + (1 - ALFA) * prev_smooth[e]
             prev_smooth[e] = val_smooth
             
