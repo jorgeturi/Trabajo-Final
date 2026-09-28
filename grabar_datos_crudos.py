@@ -9,7 +9,7 @@ import keyboard
 # ==========================================
 # CONFIGURACIÓN DEL EXPERIMENTO
 # ==========================================
-NOMBRE_MOVIMIENTO = "ruido"  # Cambia esto según el gesto que grabes (ej: "reposo", "sonrisa")
+NOMBRE_MOVIMIENTO = "ruido 28-9"  # Cambia esto según el gesto que grabes (ej: "reposo", "sonrisa")
 FS = 220.0                   # Frecuencia de muestreo Muse v1
 
 # Variables globales para los datos
