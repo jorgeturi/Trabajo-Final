@@ -3,20 +3,15 @@ import threading
 import logging
 from flask import Flask, jsonify, render_template_string
 
-# Apagar los logs molestos de Flask en la consola
 log = logging.getLogger('werkzeug')
 log.setLevel(logging.ERROR)
 
-# ==========================================
-# CONFIGURACIÓN
-# ==========================================
-IP_RASPBERRY = "192.168.1.50"  # IP de tu Raspberry Pi
+IP_RASPBERRY = "192.168.1.50"
 PUERTO_ZMQ = 5555
 PUERTO_WEB = 8080
 
 app = Flask(__name__)
 
-# Memoria global donde guardamos los últimos datos para la web
 DATOS_ACTUALES = {
     "acc": {"x": 0, "y": 0, "z": 0},
     "gyro": {"x": 0, "y": 0, "z": 0},
@@ -25,21 +20,18 @@ DATOS_ACTUALES = {
     "bateria": "Calculando...",
     "parpadeos_total": 0,
     "mandibula_total": 0,
-    "evento_reciente": "Ninguno",
+    "evento_reciente": "ESPERANDO SEÑAL",
     "alpha": [0,0,0,0],
     "beta": [0,0,0,0]
 }
 
-# ==========================================
-# HILO RECEPTOR DE ZMQ
-# ==========================================
 def lector_zmq():
     context = zmq.Context()
     sock = context.socket(zmq.SUB)
     sock.connect(f"tcp://{IP_RASPBERRY}:{PUERTO_ZMQ}")
     sock.setsockopt_string(zmq.SUBSCRIBE, "")
 
-    print(f"[*] Hilo ZMQ conectado a {IP_RASPBERRY}:{PUERTO_ZMQ}")
+    print(f"[INFO] Hilo ZMQ escuchando en {IP_RASPBERRY}:{PUERTO_ZMQ}")
 
     while True:
         try:
@@ -61,12 +53,12 @@ def lector_zmq():
             elif tipo == "BLINK":
                 if msg.get("valor") == 1:
                     DATOS_ACTUALES["parpadeos_total"] += 1
-                    DATOS_ACTUALES["evento_reciente"] = "👁️ PARPADEO DETECTADO"
+                    DATOS_ACTUALES["evento_reciente"] = "PARPADEO"
             
             elif tipo == "JAW_CLENCH":
                 if msg.get("valor") == 1:
                     DATOS_ACTUALES["mandibula_total"] += 1
-                    DATOS_ACTUALES["evento_reciente"] = "🦷 MANDÍBULA APRETADA"
+                    DATOS_ACTUALES["evento_reciente"] = "MANDIBULA"
 
             elif tipo == "OTRO":
                 address = msg.get("address", "")
@@ -84,13 +76,9 @@ def lector_zmq():
         except Exception:
             pass
 
-# Iniciamos el hilo de ZMQ en segundo plano
 hilo = threading.Thread(target=lector_zmq, daemon=True)
 hilo.start()
 
-# ==========================================
-# RUTAS DEL SERVIDOR WEB (FLASK)
-# ==========================================
 @app.route('/datos')
 def obtener_datos():
     return jsonify(DATOS_ACTUALES)
@@ -102,82 +90,191 @@ def index():
     <html lang="es">
     <head>
         <meta charset="UTF-8">
-        <title>Dashboard BCI Muse</title>
+        <title>Telemetría BCI</title>
         <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
         <style>
-            body { background-color: #121212; color: #ffffff; padding: 20px; }
-            .card { background-color: #1e1e1e; border: 1px solid #333; margin-bottom: 20px; }
-            .card-header { font-weight: bold; font-size: 1.1rem; border-bottom: 1px solid #333; }
-            .bueno { color: #00ff00; font-weight: bold; }
-            .malo { color: #ff3333; font-weight: bold; }
-            .evento-destacado { font-size: 1.3rem; color: #00d2ff; }
-            .dato-imu { display: inline-block; width: 30%; text-align: center; font-family: monospace; font-size: 1.1rem;}
+            :root {
+                --bg-base: #000000;
+                --bg-panel: #111111;
+                --border-hard: #333333;
+                --text-main: #FFFFFF;
+                --text-data: #00E5FF;
+                --ok: #00FF00;
+                --warn: #FFFF00;
+                --err: #FF0000;
+            }
+            body {
+                background-color: var(--bg-base);
+                color: var(--text-main);
+                font-family: 'Inter', sans-serif;
+                padding: 2rem;
+            }
+            h2 {
+                font-weight: 600;
+                text-transform: uppercase;
+                letter-spacing: 2px;
+                margin-bottom: 2rem;
+                font-size: 1.5rem;
+            }
+            .card {
+                background-color: var(--bg-panel);
+                border: 1px solid var(--border-hard);
+                border-radius: 0;
+                margin-bottom: 20px;
+            }
+            .card-header {
+                background-color: transparent;
+                border-bottom: 1px solid var(--border-hard);
+                font-weight: 600;
+                font-size: 0.9rem;
+                text-transform: uppercase;
+                letter-spacing: 1px;
+                color: var(--text-main);
+                padding: 1rem;
+            }
+            .card-body {
+                padding: 1.5rem;
+            }
+            .label-row {
+                display: flex;
+                justify-content: space-between;
+                border-bottom: 1px solid var(--border-hard);
+                padding: 0.5rem 0;
+            }
+            .label-row:last-child {
+                border-bottom: none;
+            }
+            .data-label {
+                font-size: 0.9rem;
+                font-weight: 600;
+                color: var(--text-main);
+            }
+            .data-value {
+                font-family: 'JetBrains Mono', monospace;
+                font-size: 1rem;
+                color: var(--text-data);
+            }
+            .imu-grid {
+                display: grid;
+                grid-template-columns: repeat(3, 1fr);
+                gap: 10px;
+                margin-top: 10px;
+                margin-bottom: 20px;
+            }
+            .imu-item {
+                font-family: 'JetBrains Mono', monospace;
+                background-color: var(--bg-base);
+                border: 1px solid var(--border-hard);
+                padding: 0.5rem;
+                text-align: center;
+                font-size: 0.9rem;
+                color: var(--text-data);
+            }
+            .event-box {
+                font-family: 'JetBrains Mono', monospace;
+                font-size: 1.2rem;
+                font-weight: 700;
+                color: var(--text-base);
+                background-color: var(--text-data);
+                color: #000000;
+                padding: 1rem;
+                text-align: center;
+                text-transform: uppercase;
+                margin-top: 1rem;
+            }
+            .status-ok { color: var(--ok); font-family: 'JetBrains Mono', monospace; }
+            .status-warn { color: var(--warn); font-family: 'JetBrains Mono', monospace; }
+            .status-err { color: var(--err); font-family: 'JetBrains Mono', monospace; }
         </style>
     </head>
     <body>
-        <div class="container-fluid">
-            <h2 class="mb-4 text-center">🧠 TuJo BCI Dashboard</h2>
+        <div class="container-fluid max-w-7xl">
+            <h2>Panel de Telemetría</h2>
             
-            <div class="row">
-                <!-- Tarjeta de Estado Físico -->
+            <div class="row g-4">
                 <div class="col-md-4">
                     <div class="card h-100">
-                        <div class="card-header text-info">📡 Estado del Hardware</div>
+                        <div class="card-header">Hardware</div>
                         <div class="card-body">
-                            <p>Batería: <span id="bateria" class="text-warning fw-bold">Cargando...</span></p>
-                            <p>Contacto Frente: <span id="frente">Buscando...</span></p>
-                            <hr>
-                            <p class="mb-1 text-muted">Calidad de Señal por Sensor:</p>
-                            <p class="mb-0">TP9 (Oreja Izq): <span id="tp9"></span></p>
-                            <p class="mb-0">FP1 (Frente Izq): <span id="fp1"></span></p>
-                            <p class="mb-0">FP2 (Frente Der): <span id="fp2"></span></p>
-                            <p class="mb-0">TP10 (Oreja Der): <span id="tp10"></span></p>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Tarjeta de IMU (Movimiento) -->
-                <div class="col-md-4">
-                    <div class="card h-100">
-                        <div class="card-header text-success">🧭 Unidad de Movimiento (IMU)</div>
-                        <div class="card-body">
-                            <h6 class="text-secondary">Acelerómetro</h6>
-                            <div class="w-100 mb-3 bg-dark p-2 rounded border border-secondary">
-                                <span class="dato-imu text-danger">X: <span id="acc_x">0</span></span>
-                                <span class="dato-imu text-success">Y: <span id="acc_y">0</span></span>
-                                <span class="dato-imu text-primary">Z: <span id="acc_z">0</span></span>
+                            <div class="label-row">
+                                <span class="data-label">Batería</span>
+                                <span class="data-value" id="bateria">--</span>
+                            </div>
+                            <div class="label-row mb-4">
+                                <span class="data-label">Contacto Frontal</span>
+                                <span class="data-value" id="frente">--</span>
                             </div>
                             
-                            <h6 class="text-secondary">Giroscopio</h6>
-                            <div class="w-100 bg-dark p-2 rounded border border-secondary">
-                                <span class="dato-imu text-danger">X: <span id="gyro_x">0</span></span>
-                                <span class="dato-imu text-success">Y: <span id="gyro_y">0</span></span>
-                                <span class="dato-imu text-primary">Z: <span id="gyro_z">0</span></span>
+                            <div class="data-label mt-4 mb-2">Conexión Electrodos</div>
+                            <div class="label-row">
+                                <span>TP9 (Izq)</span>
+                                <span id="tp9"></span>
+                            </div>
+                            <div class="label-row">
+                                <span>FP1 (Frente Izq)</span>
+                                <span id="fp1"></span>
+                            </div>
+                            <div class="label-row">
+                                <span>FP2 (Frente Der)</span>
+                                <span id="fp2"></span>
+                            </div>
+                            <div class="label-row">
+                                <span>TP10 (Der)</span>
+                                <span id="tp10"></span>
                             </div>
                         </div>
                     </div>
                 </div>
 
-                <!-- Tarjeta de Eventos y Ondas -->
                 <div class="col-md-4">
-                    <div class="card mb-3">
-                        <div class="card-header text-warning">⚡ Eventos Detectados</div>
-                        <div class="card-body text-center">
-                            <div class="d-flex justify-content-around mb-2">
-                                <div>Parpadeos<br><span id="cont_parpadeos" class="fs-3 fw-bold">0</span></div>
-                                <div>Mandíbula<br><span id="cont_mandibula" class="fs-3 fw-bold">0</span></div>
+                    <div class="card h-100">
+                        <div class="card-header">Cinemática (IMU)</div>
+                        <div class="card-body">
+                            <div class="data-label">Acelerómetro</div>
+                            <div class="imu-grid">
+                                <div class="imu-item">X: <span id="acc_x">0.0</span></div>
+                                <div class="imu-item">Y: <span id="acc_y">0.0</span></div>
+                                <div class="imu-item">Z: <span id="acc_z">0.0</span></div>
                             </div>
-                            <div id="evento_reciente" class="evento-destacado bg-dark rounded py-2">Ninguno</div>
+                            
+                            <div class="data-label">Giroscopio</div>
+                            <div class="imu-grid mb-0">
+                                <div class="imu-item">X: <span id="gyro_x">0.0</span></div>
+                                <div class="imu-item">Y: <span id="gyro_y">0.0</span></div>
+                                <div class="imu-item">Z: <span id="gyro_z">0.0</span></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="col-md-4">
+                    <div class="card mb-4">
+                        <div class="card-header">Eventos</div>
+                        <div class="card-body">
+                            <div class="label-row">
+                                <span class="data-label">Parpadeos Totales</span>
+                                <span id="cont_parpadeos" class="data-value">0</span>
+                            </div>
+                            <div class="label-row">
+                                <span class="data-label">Contracciones</span>
+                                <span id="cont_mandibula" class="data-value">0</span>
+                            </div>
+                            <div id="evento_reciente" class="event-box">--</div>
                         </div>
                     </div>
                     
                     <div class="card">
-                        <div class="card-header text-primary">🌊 Bandas de Frecuencia</div>
+                        <div class="card-header">Bandas de Frecuencia</div>
                         <div class="card-body">
-                            <p class="mb-1 small text-muted">Alpha (Relajación)</p>
-                            <p class="mb-2 text-monospace" id="alpha">[0, 0, 0, 0]</p>
-                            <p class="mb-1 small text-muted">Beta (Concentración)</p>
-                            <p class="mb-0 text-monospace" id="beta">[0, 0, 0, 0]</p>
+                            <div class="label-row">
+                                <span class="data-label">Alpha</span>
+                                <span class="data-value" id="alpha">[0, 0, 0, 0]</span>
+                            </div>
+                            <div class="label-row">
+                                <span class="data-label">Beta</span>
+                                <span class="data-value" id="beta">[0, 0, 0, 0]</span>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -186,9 +283,9 @@ def index():
 
         <script>
             function formatoSensor(valor) {
-                if (valor === 1) return "<span class='bueno'>1 (Óptimo)</span>";
-                if (valor === 2) return "<span class='text-warning'>2 (Regular)</span>";
-                return "<span class='malo'>4 (Malo/Sin contacto)</span>";
+                if (valor === 1) return "<span class='status-ok'>OK</span>";
+                if (valor === 2) return "<span class='status-warn'>REGULAR</span>";
+                return "<span class='status-err'>FALLA</span>";
             }
 
             setInterval(() => {
@@ -196,7 +293,7 @@ def index():
                     .then(response => response.json())
                     .then(data => {
                         document.getElementById('bateria').innerText = data.bateria;
-                        document.getElementById('frente').innerHTML = data.frente === 1 ? "<span class='bueno'>Sí</span>" : "<span class='malo'>No</span>";
+                        document.getElementById('frente').innerHTML = data.frente === 1 ? "<span class='status-ok'>CONECTADO</span>" : "<span class='status-err'>DESCONECTADO</span>";
                         
                         document.getElementById('tp9').innerHTML = formatoSensor(data.horseshoe.TP9);
                         document.getElementById('fp1').innerHTML = formatoSensor(data.horseshoe.FP1);
@@ -207,13 +304,13 @@ def index():
                         document.getElementById('cont_mandibula').innerText = data.mandibula_total;
                         document.getElementById('evento_reciente').innerText = data.evento_reciente;
                         
-                        document.getElementById('acc_x').innerText = data.acc.x.toFixed(1);
-                        document.getElementById('acc_y').innerText = data.acc.y.toFixed(1);
-                        document.getElementById('acc_z').innerText = data.acc.z.toFixed(1);
+                        document.getElementById('acc_x').innerText = data.acc.x.toFixed(1).padStart(5, ' ');
+                        document.getElementById('acc_y').innerText = data.acc.y.toFixed(1).padStart(5, ' ');
+                        document.getElementById('acc_z').innerText = data.acc.z.toFixed(1).padStart(5, ' ');
 
-                        document.getElementById('gyro_x').innerText = data.gyro.x.toFixed(1);
-                        document.getElementById('gyro_y').innerText = data.gyro.y.toFixed(1);
-                        document.getElementById('gyro_z').innerText = data.gyro.z.toFixed(1);
+                        document.getElementById('gyro_x').innerText = data.gyro.x.toFixed(1).padStart(5, ' ');
+                        document.getElementById('gyro_y').innerText = data.gyro.y.toFixed(1).padStart(5, ' ');
+                        document.getElementById('gyro_z').innerText = data.gyro.z.toFixed(1).padStart(5, ' ');
                         
                         document.getElementById('alpha').innerText = JSON.stringify(data.alpha);
                         document.getElementById('beta').innerText = JSON.stringify(data.beta);
@@ -226,9 +323,5 @@ def index():
     return render_template_string(html_dashboard)
 
 if __name__ == '__main__':
-    print("\n" + "="*50)
-    print(f"🚀 DASHBOARD WEB INICIADO")
-    print(f"👉 Abre tu navegador en la PC en: http://127.0.0.1:{PUERTO_WEB}")
-    print("="*50 + "\n")
-    
+    print(f"[INFO] Servidor web de telemetria iniciado en http://127.0.0.1:{PUERTO_WEB}")
     app.run(host="0.0.0.0", port=PUERTO_WEB, debug=False)

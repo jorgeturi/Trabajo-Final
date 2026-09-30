@@ -9,8 +9,8 @@ import keyboard
 # ==========================================
 # CONFIGURACIÓN DEL EXPERIMENTO
 # ==========================================
-NOMBRE_MOVIMIENTO = "ruido 28-9"  # Cambia esto según el gesto que grabes (ej: "reposo", "sonrisa")
-FS = 220.0                   # Frecuencia de muestreo Muse v1
+NOMBRE_MOVIMIENTO = "levantar cejas moma2 30-9"  # Cambiar según gesto 
+FS = 220.0                        # Frecuencia de muestreo Muse v1
 
 # Variables globales para los datos
 raw_ch_data = [0.0, 0.0, 0.0, 0.0]
@@ -19,7 +19,7 @@ nombres_ch = ['TP9', 'FP1', 'FP2', 'TP10']
 
 paquetes_eeg_recibidos = 0
 
-# Manejadores específicos para filtrar lo que nos importa
+# Manejadores específicos para filtrar lo que importa
 def eeg_handler(address, *args):
     global raw_ch_data, paquetes_eeg_recibidos
     if len(args) >= 4:
@@ -33,7 +33,7 @@ def horseshoe_handler(address, *args):
 
 def iniciar_osc():
     disp = dispatcher.Dispatcher()
-    # Filtramos únicamente las rutas que nos interesan para el dataset
+    # Filtramos las rutas que nos interesan para el dataset
     disp.map("/muse/eeg", eeg_handler)
     disp.map("/muse/elements/horseshoe", horseshoe_handler)
     
@@ -47,11 +47,11 @@ def grabar_dataset():
     nombre_archivo = f"dataset_{NOMBRE_MOVIMIENTO}_{int(time.time())}.csv"
     
     print("==================================================")
-    print("🧠 Data Logger BCI - Grabación de Data Pura")
+    print("Logger HMI - Grabación de Data Pura")
     print(f"Movimiento: {NOMBRE_MOVIMIENTO.upper()}")
     print(f"Archivo: {nombre_archivo}")
-    print("Instrucciones: MANTÉN PRESIONADA LA BARRA ESPACIADORA")
-    print("mientras haces el movimiento. Suéltala al terminar.")
+    print("Instrucciones: MANTENER PRESIONADA LA BARRA ESPACIADORA")
+    print("antes de hacer el movimiento. Soltala despues de terminar.")
     print("Presiona 'ESC' para detener y guardar.")
     print("==================================================\n")
     
@@ -65,7 +65,7 @@ def grabar_dataset():
         
         while True:
             if keyboard.is_pressed('esc'):
-                print(f"\n✅ Grabación finalizada. {filas_grabadas} filas guardadas en {nombre_archivo}")
+                print(f"\nGrabación finalizada. {filas_grabadas} filas guardadas en {nombre_archivo}")
                 break
                 
             # Marcador de teclado (Trigger)
@@ -80,7 +80,7 @@ def grabar_dataset():
             filas_grabadas += 1
             
             # Feedback visual por consola
-            estado_trigger = "🔴 GRABANDO [ESPACIO]" if trigger == 1 else "⚪ Reposo..."
+            estado_trigger = "GRABANDO [ESPACIO]" if trigger == 1 else "Reposo..."
             
             ch_str = " | ".join([f"{nombres_ch[i]}: {raw_ch_data[i]:.2f}" for i in range(4)])
             hs_str = " | ".join([f"{nombres_ch[i]}_hs: {horseshoe_status[i]}" for i in range(4)])
