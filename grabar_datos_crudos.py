@@ -1,30 +1,47 @@
-import numpy as np
-from pythonosc import dispatcher, osc_server
+import csv
 import threading
 import time
 import sys
-import csv
 import keyboard
 
 # ==========================================
 # CONFIGURACIÓN DEL EXPERIMENTO
 # ==========================================
-NOMBRE_MOVIMIENTO = "guiñar ojo derecho yani 2-10"  # Cambiar según gesto 
-FS = 220.0                        # Frecuencia de muestreo Muse v1
+NOMBRE_MOVIMIENTO = "guiñar ojo derecho 2-10"
+FS = 220.0  # Frecuencia de muestreo nominal Muse v1
 
-# Variables globales para los datos
+# Variables globales
 raw_ch_data = [0.0, 0.0, 0.0, 0.0]
-horseshoe_status = [4.0, 4.0, 4.0, 4.0] # 4.0 = Malo por defecto hasta recibir lectura real
+horseshoe_status = [4.0, 4.0, 4.0, 4.0]
 nombres_ch = ['TP9', 'FP1', 'FP2', 'TP10']
-
 paquetes_eeg_recibidos = 0
 
-# Manejadores específicos para filtrar lo que importa
+# Configuración del archivo CSV
+nombre_archivo = f"dataset_{NOMBRE_MOVIMIENTO}_{int(time.time())}.csv"
+cabeceras = ['Timestamp', 'Trigger', 'Sensores_OK'] + nombres_ch
+
+# Abrimos el archivo globalmente para escritura continua de alta velocidad
+file_handle = open(nombre_archivo, mode='w', newline='', encoding='utf-8')
+writer = csv.writer(file_handle)
+writer.writerow(cabeceras) # Escribimos cabeceras de entrada
+
 def eeg_handler(address, *args):
     global raw_ch_data, paquetes_eeg_recibidos
     if len(args) >= 4:
         raw_ch_data = list(args[:4])
         paquetes_eeg_recibidos += 1
+        
+        # Obtenemos el estado actual de las teclas en el momento exacto del paquete EEG
+        trigger = 1 if keyboard.is_pressed('space') else 0
+        sensores_ok = 1 if all(h <= 2.0 for h in horseshoe_status) else 0
+        
+        # Escribimos inmediatamente al recibir el paquete del hardware (A 220 Hz reales)
+        fila = [time.time(), trigger, sensores_ok] + raw_ch_data
+        try:
+            writer.writerow(fila)
+            file_handle.flush() # Asegura que se guarde en disco al instante sin buffer lento
+        except Exception:
+            pass
 
 def horseshoe_handler(address, *args):
     global horseshoe_status
@@ -32,68 +49,46 @@ def horseshoe_handler(address, *args):
         horseshoe_status = list(args[:4])
 
 def iniciar_osc():
+    from pythonosc import dispatcher, osc_server
     disp = dispatcher.Dispatcher()
-    # Filtramos las rutas que nos interesan para el dataset
     disp.map("/muse/eeg", eeg_handler)
     disp.map("/muse/elements/horseshoe", horseshoe_handler)
     
-    print("Iniciando servidor OSC en 0.0.0.0:5000 (Escuchando red local)...")
-    # Escuchamos en 0.0.0.0 para recibir los paquetes que vengan desde la Raspberry Pi
+    print("Iniciando servidor OSC en 0.0.0.0:5000...")
     server = osc_server.ThreadingOSCUDPServer(("0.0.0.0", 5000), disp)
     server.serve_forever()
 
-def grabar_dataset():
-    global paquetes_eeg_recibidos
-    nombre_archivo = f"dataset_{NOMBRE_MOVIMIENTO}_{int(time.time())}.csv"
-    
+if __name__ == "__main__":
+    # Lanzamos el servidor OSC en hilo daemon
+    threading.Thread(target=iniciar_osc, daemon=True).start()
+    time.sleep(1.0) 
+
     print("==================================================")
-    print("Logger HMI - Grabación de Data Pura")
+    print("Logger HMI - Grabación Sincronizada a 220Hz")
     print(f"Movimiento: {NOMBRE_MOVIMIENTO.upper()}")
     print(f"Archivo: {nombre_archivo}")
     print("Instrucciones: MANTENER PRESIONADA LA BARRA ESPACIADORA")
     print("antes de hacer el movimiento. Soltala despues de terminar.")
     print("Presiona 'ESC' para detener y guardar.")
     print("==================================================\n")
-    
-    cabeceras = ['Timestamp', 'Trigger', 'Sensores_OK'] + nombres_ch
-    
-    with open(nombre_archivo, mode='w', newline='') as file:
-        writer = csv.writer(file)
-        writer.writerow(cabeceras)
-        
-        filas_grabadas = 0
-        
+
+    try:
         while True:
             if keyboard.is_pressed('esc'):
-                print(f"\nGrabación finalizada. {filas_grabadas} filas guardadas en {nombre_archivo}")
+                print(f"\nGrabación finalizada. Total paquetes EEG guardados: {paquetes_eeg_recibidos}")
                 break
-                
-            # Marcador de teclado (Trigger)
-            trigger = 1 if keyboard.is_pressed('space') else 0
             
-            # Validación de sensores: 1 si todos los valores de horseshoe son menores a 2.0 (buen contacto)
-            sensores_ok = 1 if all(h <= 2.0 for h in horseshoe_status) else 0
-            
-            # Construcción de la fila con data pura
-            fila = [time.time(), trigger, sensores_ok] + raw_ch_data
-            writer.writerow(fila)
-            filas_grabadas += 1
-            
-            # Feedback visual por consola
-            estado_trigger = "GRABANDO [ESPACIO]" if trigger == 1 else "Reposo..."
-            
+            # Feedback visual ligero en consola
+            estado_trigger = "GRABANDO [ESPACIO]" if keyboard.is_pressed('space') else "Reposo..."
             ch_str = " | ".join([f"{nombres_ch[i]}: {raw_ch_data[i]:.2f}" for i in range(4)])
             hs_str = " | ".join([f"{nombres_ch[i]}_hs: {horseshoe_status[i]}" for i in range(4)])
             
             sys.stdout.write(
-                f"\rEEG Pkts: {paquetes_eeg_recibidos} | {estado_trigger} | "
-                f"Raw[{ch_str}] | HS[{hs_str}]   "
+                f"\rPkts: {paquetes_eeg_recibidos} | {estado_trigger} | Raw[{ch_str}] | HS[{hs_str}]   "
             )
             sys.stdout.flush()
+            time.sleep(0.05)
             
-            time.sleep(0.01) # Tasa de refresco fluida para la interfaz de consola
-
-if __name__ == "__main__":
-    threading.Thread(target=iniciar_osc, daemon=True).start()
-    time.sleep(1.0) 
-    grabar_dataset()
+    finally:
+        file_handle.close()
+        print("\nArchivo cerrado correctamente.")
