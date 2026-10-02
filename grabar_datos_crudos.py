@@ -9,7 +9,7 @@ import keyboard
 # ==========================================
 # CONFIGURACIÓN DEL EXPERIMENTO
 # ==========================================
-NOMBRE_MOVIMIENTO = "levantar cejas moma2 30-9"  # Cambiar según gesto 
+NOMBRE_MOVIMIENTO = "guiñar ojo derecho yani 2-10"  # Cambiar según gesto 
 FS = 220.0                        # Frecuencia de muestreo Muse v1
 
 # Variables globales para los datos
