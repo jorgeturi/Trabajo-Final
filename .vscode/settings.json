@@ -5,7 +5,7 @@
         "reportMissingModuleSource": "none"
     },
     "python.terminal.activateEnvironment": false,
-    "micropico.openOnStart": false,
+    "micropico.openOnStart": true,
     "python.analysis.typeshedPaths": [
         "~/.micropico-stubs/included"
     ],
