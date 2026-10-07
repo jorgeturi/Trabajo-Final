@@ -1,0 +1,23 @@
+Revisión metodológica: Procesamiento de señales
+
+Se repasó el funcionamiento del método de Welch para el cálculo de la Densidad Espectral de Potencia (PSD).
+
+Se justificó matemáticamente el uso de un solapamiento del 50% entre ventanas. Al utilizar una ventana de Hann (que atenúa los extremos de la señal para evitar artefactos de corte), el solapamiento del 50% garantiza que los datos atenuados en los bordes de una ventana coincidan con el centro (máxima amplitud) de la ventana adyacente. Esto evita la pérdida de información real durante la transformación al dominio de la frecuencia.
+
+3. Diagnóstico de pérdida de muestras
+
+Incidente: Se detectó que la frecuencia de muestreo real de las grabaciones rondaba los 90 Hz o 157 Hz, muy por debajo de los 220 Hz teóricos del hardware Muse v1.
+
+Acción: Se desarrolló un script de diagnóstico (analizar_dataset_eeg.py) para medir la frecuencia real a partir de los deltas de la columna temporal, calcular el porcentaje de paquetes perdidos y extraer estadísticas (media y varianza) en estado de reposo frente a estado de gesto.
+
+4. Optimización crítica del Logger EEG (Resolución del cuello de botella)
+
+Causa raíz: Tras revisar el script de captura, se identificó que la pérdida masiva de paquetes se debía a operaciones bloqueantes dentro del handler UDP de OSC (eeg_handler). Específicamente, el guardado en disco línea por línea (file_handle.flush()) y el sondeo del hardware del teclado (keyboard.is_pressed()) pausaban la ejecución del hilo receptor, provocando que los paquetes UDP entrantes fueran descartados por el sistema operativo.
+
+Solución: Se rediseñó la arquitectura del script pasando a un modelo Productor-Consumidor:
+
+Productor (Hilo OSC): Ahora se limita exclusivamente a guardar las lecturas en una lista en memoria RAM (buffer_datos), una operación de latencia casi nula.
+
+Consumidor (Hilo principal): Se encarga de leer el estado del teclado a baja frecuencia (20 Hz) y volcar los datos de la RAM al disco duro en grandes lotes (writerows) mediante el uso de bloqueos de hilo (threading.Lock()) para evitar colisiones.
+
+Resultado esperado: Eliminación de los bloqueos de I/O de disco y recuperación de la tasa de captura a los 220 Hz teóricos sin pérdida de paquetes.
