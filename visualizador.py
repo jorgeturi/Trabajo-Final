@@ -19,7 +19,7 @@ app = QtWidgets.QApplication(sys.argv)
 pg.setConfigOptions(antialias=True) # Suaviza las líneas de los gráficos
 
 # Ventana principal
-win = pg.GraphicsLayoutWidget(show=True, title="BCI TuJo - Centro de Monitoreo")
+win = pg.GraphicsLayoutWidget(show=True, title="MHI TuJo - Centro de Monitoreo")
 win.resize(1000, 800)
 
 # Etiqueta superior para los datos del IMU (Acelerómetro)
@@ -37,7 +37,7 @@ datos_y = {ch: [0] * tamano_ventana for ch in canales}
 
 # Crear un gráfico apilado por cada canal
 for i, ch in enumerate(canales):
-    p = win.addPlot(title=f"Canal {ch} (Onda Filtrada)")
+    p = win.addPlot(title=f"Canal {ch} ")
     p.showGrid(x=True, y=True, alpha=0.3)
     
     # Dibujamos la línea de cada canal con su color

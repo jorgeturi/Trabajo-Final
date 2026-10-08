@@ -77,10 +77,14 @@ def procesar_resto(address, *args):
 def hilo_procesador_bci():
     global estado_filtro, contador_submuestreo
     
+    # ---> SOLUCIÓN: INICIALIZAR MEMORIA ANTES DEL BUCLE <---
+    contacto_tp9 = 4
+    contacto_fp1 = 4
+    contacto_fp2 = 4
+    contacto_tp10 = 4
+    
     while True:
         time.sleep(0.05) 
-        
-        # DENTRO DEL while True DE hilo_procesador_bci:
         
         with buffer_lock:
             lote_eeg = buffer_eeg.copy()
@@ -117,17 +121,18 @@ def hilo_procesador_bci():
         # ---------------------------------------------------------
         # ENVÍO 2: ZMQ DEBUG MOTORES (Red)
         # ---------------------------------------------------------
-        paquete_debug_motor = {
-            "tipo": "DEBUG_MOTOR",
-            "pwm1": pwm1,
-            "pwm2": pwm2,
-            "x_crudo": estado_mot["x_crudo"],
-            "z_crudo": estado_mot["z_crudo"],
-            "x_filt": estado_mot["x_filt"],
-            "z_filt": estado_mot["z_filt"]
-        }
-        with zmq_lock:
-            zmq_socket.send_json(paquete_debug_motor)
+        if len(lote_eventos) > 0:
+            paquete_debug_motor = {
+                "tipo": "DEBUG_MOTOR",
+                "pwm1": pwm1,
+                "pwm2": pwm2,
+                "x_crudo": estado_mot["x_crudo"],
+                "z_crudo": estado_mot["z_crudo"],
+                "x_filt": estado_mot["x_filt"],
+                "z_filt": estado_mot["z_filt"]
+            }
+            with zmq_lock:
+                zmq_socket.send_json(paquete_debug_motor)
                 
         # 3. Filtrar y enviar EEG
         if lote_eeg:

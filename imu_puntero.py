@@ -18,97 +18,129 @@ sock.setsockopt_string(zmq.SUBSCRIBE, "")
 app = QtWidgets.QApplication(sys.argv)
 pg.setConfigOptions(antialias=True)
 
-win = pg.GraphicsLayoutWidget(show=True, title="BCI TuJo - Simulador de Puntero Definitivo")
-win.resize(900, 850)
+win = pg.GraphicsLayoutWidget(show=True, title="BCI TuJo - Simulador BCI y Motores")
+win.resize(1100, 850) 
 
-badge_label = win.addLabel("Calibrando centro... Mantén la cabeza neutral unos segundos.", size="13pt", color="w")
+# Etiqueta superior
+badge_label = win.addLabel("Monitor ZMQ - Mostrando datos procesados por el Controlador", size="13pt", color="w", colspan=2)
 win.nextRow()
 
-p_plot = win.addPlot(title="Simulador de Puntero 2D (Inclinaciones Limpias)")
+# --- PANEL IZQUIERDO: SIMULADOR DE PUNTERO DOBLE ---
+p_plot = win.addPlot(title="Simulador: Crudo (Rojo) vs Filtrado (Azul)")
 p_plot.showGrid(x=True, y=True, alpha=0.4)
-p_plot.setXRange(-400, 400)
-p_plot.setYRange(-400, 400)
+p_plot.addLegend()
 
-puntero = p_plot.plot(pen=None, symbol='o', symbolPen='c', symbolBrush='b', symbolSize=30)
-rastro = p_plot.plot(pen=pg.mkPen(color=(0, 200, 255, 120), width=3))
+# Rango ajustado (amplía si tu Muse entrega valores mayores a 800)
+p_plot.setXRange(-800, 800)
+p_plot.setYRange(-800, 800)
 
-# Variables de calibración y suavizado
-centro_x = None
-centro_y = None
-centro_z = None
+# Gráficos del dato CRUDO (Rojo)
+rastro_crudo = p_plot.plot(pen=pg.mkPen(color=(255, 50, 50, 100), width=2, style=QtCore.Qt.DashLine))
+puntero_crudo = p_plot.plot(pen=None, symbol='x', symbolPen='r', symbolBrush='r', symbolSize=15, name="Crudo")
 
-pos_x_suave = 0.0
-pos_y_suave = 0.0
-ALFA = 0.12         # Factor de suavizado (filtro contra ruido o movimientos bruscos)
-SENSIBILIDAD = 2.0  # Ajuste de velocidad del puntero
-DEADZONE = 15.0     # Zona muerta central para evitar temblores en reposo
+# Gráficos del dato FILTRADO (Azul)
+rastro_suave = p_plot.plot(pen=pg.mkPen(color=(0, 200, 255, 120), width=3))
+puntero_suave = p_plot.plot(pen=None, symbol='o', symbolPen='c', symbolBrush='b', symbolSize=25, name="Filtrado")
 
-hist_x = []
-hist_y = []
+# --- PANEL DERECHO: ESTADO DE MOTORES PWM ---
+p_motores = win.addPlot(title="Motores - Salida PWM (-100 a +100%)")
+p_motores.showGrid(y=True, alpha=0.5)
+p_motores.setYRange(-100, 100) # Soporta reversa (negativos)
+p_motores.setXRange(-0.5, 1.5)
+
+eje_x = p_motores.getAxis('bottom')
+eje_x.setTicks([[(0, 'M1 (Eje X)'), (1, 'M2 (Eje Z)')]])
+
+barras_motores = pg.BarGraphItem(x=[0, 1], height=[0, 0], width=0.6, brushes=['#0088FF', '#FF8800'])
+p_motores.addItem(barras_motores)
+
+win.nextRow()
+
+# Etiqueta inferior
+motor_label = win.addLabel("Datos de motores: Esperando...", size="12pt", color="yellow", colspan=2)
+
+# ==========================================
+# VARIABLES GLOBALES
+# ==========================================
+SENSIBILIDAD = 1.0  # Ajuste de amplitud en pantalla (solo visual)
+
+# Historiales para dibujar el "rastro" o estela de los punteros
+hist_x_suave, hist_y_suave = [], []
+hist_x_crudo, hist_y_crudo = [], []
+
+# Variables de estado que recibiremos por ZMQ
+motor_pwm1, motor_pwm2 = 0, 0
+motor_x_filt, motor_z_filt = 0.0, 0.0
+motor_x_crudo, motor_z_crudo = 0.0, 0.0
 
 def actualizar():
-    global centro_x, centro_y, centro_z, pos_x_suave, pos_y_suave
-    raw_x, raw_y, raw_z = None, None, None
+    global motor_pwm1, motor_pwm2, motor_x_filt, motor_z_filt, motor_x_crudo, motor_z_crudo
+    
+    hay_datos_nuevos = False
     
     try:
         while True:
             msg = sock.recv_json(flags=zmq.NOBLOCK)
-            if msg.get("tipo") == "ACC":
-                raw_x = msg.get("X", msg.get("x", 0.0))
-                raw_y = msg.get("Y", msg.get("y", 0.0))
-                raw_z = msg.get("Z", msg.get("z", 0.0))
+            tipo = msg.get("tipo")
+            
+            # Solo escuchamos el paquete de diagnóstico que ya trae toda la matemática hecha
+            if tipo == "DEBUG_MOTOR":
+                motor_pwm1 = msg.get("pwm1", 0)
+                motor_pwm2 = msg.get("pwm2", 0)
+                motor_x_crudo = msg.get("x_crudo", 0.0)
+                motor_z_crudo = msg.get("z_crudo", 0.0)
+                motor_x_filt = msg.get("x_filt", 0.0)
+                motor_z_filt = msg.get("z_filt", 0.0)
+                hay_datos_nuevos = True
+                
     except zmq.Again:
         pass
 
-    if raw_x is not None and raw_y is not None and raw_z is not None:
-        if centro_x is None or centro_y is None or centro_z is None:
-            centro_x = raw_x
-            centro_y = raw_y
-            centro_z = raw_z
-            print(f"🎯 Centro calibrado -> X: {centro_x:.1f} | Y: {centro_y:.1f} | Z: {centro_z:.1f}")
-
-        # --- MAPEO DE MOVIMIENTO ---
-        # Horizontal: Movido por el eje Z (inclinación lateral hacia los hombros)
-        dx = raw_z - centro_z
-        # Vertical: Movido por el eje X invertido (mirar arriba / abajo)
-        dy = -(raw_x - centro_x)
-
-        # Aplicar zona muerta para que en reposo no se mueva solo
-        if abs(dx) < DEADZONE: 
-            dx = 0
-        else: 
-            dx = (dx - DEADZONE if dx > 0 else dx + DEADZONE)
-
-        if abs(dy) < DEADZONE: 
-            dy = 0
-        else: 
-            dy = (dy - DEADZONE if dy > 0 else dy + DEADZONE)
-
-        delta_x = dx * SENSIBILIDAD
-        delta_y = dy * SENSIBILIDAD
-
-        # Filtro exponencial de suavizado (EMA)
-        pos_x_suave = ALFA * delta_x + (1 - ALFA) * pos_x_suave
-        pos_y_suave = ALFA * delta_y + (1 - ALFA) * pos_y_suave
-
-        # Actualizar gráfico
-        puntero.setData([pos_x_suave], [pos_y_suave])
+    # 1. ACTUALIZAR GRÁFICOS (Solo si llegó información)
+    if hay_datos_nuevos:
         
-        hist_x.append(pos_x_suave)
-        hist_y.append(pos_y_suave)
-        if len(hist_x) > 40:
-            hist_x.pop(0)
-            hist_y.pop(0)
-        rastro.setData(hist_x, hist_y)
+        # --- MAPEO VISUAL ---
+        # Mantenemos tu lógica original para dibujar: Z = Eje Horizontal, -X = Eje Vertical
+        pos_x_crudo = -motor_z_crudo * SENSIBILIDAD
+        pos_y_crudo = -motor_x_crudo * SENSIBILIDAD
 
+        pos_x_suave = -motor_z_filt * SENSIBILIDAD
+        pos_y_suave = -motor_x_filt * SENSIBILIDAD
+
+        # --- DIBUJAR PUNTERO CRUDO (Rojo) ---
+        puntero_crudo.setData([pos_x_crudo], [pos_y_crudo])
+        hist_x_crudo.append(pos_x_crudo)
+        hist_y_crudo.append(pos_y_crudo)
+        if len(hist_x_crudo) > 40:
+            hist_x_crudo.pop(0)
+            hist_y_crudo.pop(0)
+        rastro_crudo.setData(hist_x_crudo, hist_y_crudo)
+
+        # --- DIBUJAR PUNTERO FILTRADO (Azul) ---
+        puntero_suave.setData([pos_x_suave], [pos_y_suave])
+        hist_x_suave.append(pos_x_suave)
+        hist_y_suave.append(pos_y_suave)
+        if len(hist_x_suave) > 40:
+            hist_x_suave.pop(0)
+            hist_y_suave.pop(0)
+        rastro_suave.setData(hist_x_suave, hist_y_suave)
+
+        # --- ACTUALIZAR ETIQUETAS Y BARRAS ---
         badge_label.setText(
-            f"Crudos -> X: {raw_x:.1f} | Y: {raw_y:.1f} | Z: {raw_z:.1f} <br>"
-            f"<b>Puntero -> X (Horiz/Z): {pos_x_suave:+.1f} | Y (Vert/Inv X): {pos_y_suave:+.1f}</b>"
+            f"Crudos -> X: {motor_x_crudo:.1f} | Z: {motor_z_crudo:.1f} <br>"
+            f"<b>Filtrados -> X: {motor_x_filt:+.1f} | Z: {motor_z_filt:+.1f}</b>"
+        )
+
+        barras_motores.setOpts(height=[motor_pwm1, motor_pwm2])
+        
+        motor_label.setText(
+            f"<b>M1 (X)</b> -> Crudo: {motor_x_crudo:>6.2f} | Filt: {motor_x_filt:>6.2f} => <b>PWM: {motor_pwm1:>5.1f}%</b>   |||   "
+            f"<b>M2 (Z)</b> -> Crudo: {motor_z_crudo:>6.2f} | Filt: {motor_z_filt:>6.2f} => <b>PWM: {motor_pwm2:>5.1f}%</b>"
         )
 
 timer = QtCore.QTimer()
 timer.timeout.connect(actualizar)
-timer.start(16) # 60 FPS
+timer.start(16) # ~60 FPS
 
 if __name__ == '__main__':
     sys.exit(app.exec_())
