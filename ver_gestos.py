@@ -76,7 +76,7 @@ def graficar_gestos_concatenados(archivos_csv):
 # --- EJECUCIÓN ---
 lista_datasets = [
     'dataset_levantar cejas pa 30-9_1790789354.csv', 
-        'dataset_levantar cejas yani 2-10_1790951036.csv'
+        'morfologia_real_dataset_levantar cejas 29-9_1790704494.csv'
 ] 
 
 graficar_gestos_concatenados(lista_datasets)

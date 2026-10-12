@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy.signal import butter, filtfilt, iirnotch, find_peaks
+from scipy.signal import butter, filtfilt, iirnotch
 import os
 
 def aplicar_filtros(data, fs):
@@ -9,7 +9,6 @@ def aplicar_filtros(data, fs):
     señal = data
     f0 = 50.0  
     if f0 < nyq:
-        # El filtro notch ahora usa el fs real exacto
         b_notch, a_notch = iirnotch(f0, 30.0, fs)
         señal = filtfilt(b_notch, a_notch, señal)
         
@@ -21,44 +20,70 @@ def aplicar_filtros(data, fs):
 def obtener_morfologia_multipeak(archivo, canales, ventana_pre, ventana_post):
     df = pd.read_csv(archivo)
     
-    # --- NUEVO: Cálculo dinámico de la frecuencia de muestreo (fs) ---
-    # Busca la columna de tiempo (Soporta nombres como 'Timestamp', 'time', 'timestamps')
+    # 1. Cálculo dinámico de la frecuencia de muestreo
     col_tiempo = next((col for col in df.columns if 'time' in col.lower()), None)
     
     if col_tiempo is not None:
         diffs = df[col_tiempo].diff().dropna()
         promedio_diff = diffs.mean()
-        # Detección automática si está en segundos o milisegundos
         if promedio_diff > 1:  
-            fs_real = 1000.0 / promedio_diff # Estaba en milisegundos
+            fs_real = 1000.0 / promedio_diff 
         else:
-            fs_real = 1.0 / promedio_diff    # Estaba en segundos
+            fs_real = 1.0 / promedio_diff    
     else:
         print(f"Advertencia: No se encontró columna de tiempo en {archivo}. Asumiendo 220 Hz.")
         fs_real = 220.0
         
     print(f"[{os.path.basename(archivo)}] - Frecuencia real calculada: {fs_real:.2f} Hz")
     
-    # 1. Filtrar canales conservando la polaridad original
+    # 2. Filtrar canales
     for ch in canales:
         señal_centrada = df[ch].values - np.mean(df[ch].values)
         df[f'{ch}_Filtrada'] = aplicar_filtros(señal_centrada, fs_real)
         
-    # 2. RADAR: Crear señal de búsqueda usando el valor absoluto de FP1
-    trigger_mask = df['Trigger'].values == 1
-    señal_radar = np.where(trigger_mask, np.abs(df['FP1_Filtrada'].values), 0)
+    # 3. Extraer eventos del Trigger
+    trigger = df['Trigger'].fillna(0).values
+    trigger_diff = np.diff(trigger, prepend=0)
     
-    umbral_uv = 150        
-    distancia_seg = 1.0    
+    inicios = np.where(trigger_diff >= 1)[0]
+    fines = np.where(trigger_diff <= -1)[0]
     
-    # La distancia mínima entre picos ahora se ajusta al fs real
-    picos_indices, _ = find_peaks(señal_radar, height=umbral_uv, distance=int(distancia_seg * fs_real))
-    print(f"[{os.path.basename(archivo)}] - Gestos detectados automáticamente: {len(picos_indices)}")
+    if len(inicios) > len(fines):
+        fines = np.append(fines, len(df)-1)
+        
+    picos_indices = []
+    
+    # 4. Encontrar el extremo más significativo por evento (sin usar abs)
+    for i in range(len(inicios)):
+        inicio_gesto = inicios[i]
+        fin_gesto = fines[i]
+        
+        segmento_fp1 = df['FP1_Filtrada'].values[inicio_gesto:fin_gesto]
+        
+        if len(segmento_fp1) > 0:
+            # Buscar el índice del pico más alto y del valle más profundo
+            idx_max_local = np.argmax(segmento_fp1)
+            idx_min_local = np.argmin(segmento_fp1)
+            
+            # Obtener sus valores reales
+            val_max = segmento_fp1[idx_max_local]
+            val_min = segmento_fp1[idx_min_local]
+            
+            # Comparar magnitudes invirtiendo el signo del valle
+            if val_max >= -val_min:
+                idx_extremo = idx_max_local
+            else:
+                idx_extremo = idx_min_local
+            
+            idx_max_global = inicio_gesto + idx_extremo
+            picos_indices.append(idx_max_global)
+            
+    print(f"[{os.path.basename(archivo)}] - Picos extremos alineados: {len(picos_indices)}")
     
     if len(picos_indices) == 0:
         return None, fs_real
 
-    # 3. EXTRACCIÓN: Usar los índices del radar para cortar la señal ORIGINAL
+    # 5. Cortar ventanas centradas en el extremo
     samples_pre = int(ventana_pre * fs_real)
     samples_post = int(ventana_post * fs_real)
     
@@ -72,7 +97,7 @@ def obtener_morfologia_multipeak(archivo, canales, ventana_pre, ventana_post):
             for ch in canales:
                 ventanas_crudas[ch].append(df[f'{ch}_Filtrada'].iloc[inicio:fin].values)
 
-    # 4. Promediar la morfología real para esta persona
+    # 6. Promediar la morfología
     patron_promedio = {}
     for ch in canales:
         patron_promedio[ch] = np.mean(ventanas_crudas[ch], axis=0)
@@ -91,28 +116,25 @@ def comparar_sujetos_morfologia(lista_datasets, ventana_pre=0.5, ventana_post=0.
         patron, fs_real = obtener_morfologia_multipeak(archivo, canales, ventana_pre, ventana_post)
         
         if patron is not None:
-            # Creamos el eje de tiempo exacto para este archivo basado en SU frecuencia
             largo_esperado = len(patron[canales[0]])
             eje_tiempo_local = np.linspace(-ventana_pre, ventana_post, largo_esperado)
             
             coleccion_patrones[nombre_base] = patron
             coleccion_tiempos[nombre_base] = eje_tiempo_local
             
-            # Exportar la plantilla real para uso futuro
             df_export = pd.DataFrame(patron)
             df_export.insert(0, 'Tiempo_Relativo', eje_tiempo_local)
             df_export.to_csv(f"morfologia_real_{nombre_base}.csv", index=False)
             
     if not coleccion_patrones:
-        print("No se extrajeron patrones. Revisa el umbral_uv.")
+        print("No se extrajeron patrones. Revisa que el dataset tenga eventos de Trigger.")
         return
 
     # ==========================================
     # GRÁFICA COMPARATIVA INTER-SUJETO
     # ==========================================
-    # CORRECCIÓN: sharey=False para que cada canal escale independientemente y no se aplasten
     fig, axs = plt.subplots(2, 2, figsize=(16, 10), sharex=True, sharey=False)
-    fig.suptitle('Comparación Morfológica Real (Alineada por Pico)')
+    fig.suptitle('Comparación Morfológica Real (Alineada por Extremo Máximo)')
     axs = axs.flatten()
     
     colores = plt.cm.tab10(np.linspace(0, 1, len(coleccion_patrones)))
