@@ -77,11 +77,14 @@ def procesar_resto(address, *args):
 def hilo_procesador_bci():
     global estado_filtro, contador_submuestreo
     
-    # ---> SOLUCIÓN: INICIALIZAR MEMORIA ANTES DEL BUCLE <---
     contacto_tp9 = 4
     contacto_fp1 = 4
     contacto_fp2 = 4
     contacto_tp10 = 4
+    
+    # --- WATCHDOG DE LA VINCHA ---
+    tiempo_ultimo_dato = time.time()
+    TIMEOUT_VINCHA = 0.5  # Segundos sin recibir datos antes de cortar motores
     
     while True:
         time.sleep(0.05) 
@@ -91,6 +94,10 @@ def hilo_procesador_bci():
             lote_eventos = buffer_eventos.copy()
             buffer_eeg.clear()
             buffer_eventos.clear()
+            
+        # Si llegaron datos nuevos (EEG o Eventos), actualizamos el reloj del Watchdog
+        if lote_eeg or lote_eventos:
+            tiempo_ultimo_dato = time.time()
         
         # 1. Calculamos y pedimos el estado completo de los motores
         control_motores.procesar_eventos(lote_eventos)
@@ -109,6 +116,16 @@ def hilo_procesador_bci():
                 contacto_fp1 = evento['FP1']
                 contacto_fp2 = evento['FP2']
                 contacto_tp10 = evento['TP10']
+
+        # --- LOGICA DE CORTE POR DESCONEXION ---
+        if (time.time() - tiempo_ultimo_dato) > TIMEOUT_VINCHA:
+            pwm1 = 0
+            pwm2 = 0
+            contacto_tp9 = 4
+            contacto_fp1 = 4
+            contacto_fp2 = 4
+            contacto_tp10 = 4
+            control_motores.forzar_parada()  # Limpia la inercia acumulada
 
         # ---------------------------------------------------------
         # ENVÍO 1: UART HACIA LA PICO (Físico)
@@ -154,6 +171,7 @@ def hilo_procesador_bci():
                     }
                     with zmq_lock: zmq_socket.send_json(paquete_eeg)
                     contador_submuestreo = 0
+
 
 # ==========================================
 # 5. ENRUTADOR Y SERVIDOR

@@ -20,4 +20,10 @@ Productor (Hilo OSC): Ahora se limita exclusivamente a guardar las lecturas en u
 
 Consumidor (Hilo principal): Se encarga de leer el estado del teclado a baja frecuencia (20 Hz) y volcar los datos de la RAM al disco duro en grandes lotes (writerows) mediante el uso de bloqueos de hilo (threading.Lock()) para evitar colisiones.
 
-Resultado esperado: Eliminación de los bloqueos de I/O de disco y recuperación de la tasa de captura a los 220 Hz teóricos sin pérdida de paquetes.
+Resultado esperado: Eliminación de los bloqueos de I/O de disco y recuperación de la tasa de captura a los 220 Hz teóricos sin pérdida de paquetes. 
+
+
+
+ESTO FUE MUY IMPORTANTE!!!
+
+ademas se dispuso usar uart para conectar pico con pi a traves de los pines

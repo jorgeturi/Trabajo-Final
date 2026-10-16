@@ -14,7 +14,7 @@ context, sock = crear_suscriptor()
 poller = zmq.Poller()
 poller.register(sock, zmq.POLLIN)
 
-print(f"👂 Escuchando ZMQ en tcp://{IP_RASPBERRY}:5555...")
+print(f" Escuchando ZMQ en tcp://{IP_RASPBERRY}:5555...")
 
 while True:
     try:
@@ -23,16 +23,16 @@ while True:
         
         if sock in sockets:
             mensaje = sock.recv_json(flags=zmq.NOBLOCK)
-            print(f"📥 RECIBIDO -> Tipo: {mensaje.get('tipo')} | Contenido: {mensaje}")
+            print(f" RECIBIDO -> Tipo: {mensaje.get('tipo')} | Contenido: {mensaje}")
         else:
             # Si pasan 2 segundos sin recibir nada, avisa (posible corte de red / cambio de IP)
-            print("⚠️ Sin datos... Verificá si sigues en la misma red Wi-Fi de la Raspberry.")
+            print(" Sin datos... Verificá si sigues en la misma red Wi-Fi de la Raspberry.")
             
     except KeyboardInterrupt:
         print("\nSaliendo...")
         break
     except Exception as e:
-        print(f"❌ Error de red/lectura: {e}. Intentando reconectar en 3 segundos...")
+        print(f" Error de red/lectura: {e}. Intentando reconectar en 3 segundos...")
         time.sleep(3)
         try:
             sock.close()
@@ -40,6 +40,6 @@ while True:
             context, sock = crear_suscriptor()
             poller = zmq.Poller()
             poller.register(sock, zmq.POLLIN)
-            print("🔄 ¡Reconectado al socket ZMQ!")
+            print(" ¡Reconectado al socket ZMQ!")
         except Exception as recon_err:
             print(f"Fallo al reconectar: {recon_err}")

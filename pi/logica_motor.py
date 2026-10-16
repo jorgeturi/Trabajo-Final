@@ -14,6 +14,15 @@ class ControladorMotores:
         self.ventana_x = deque(maxlen=35)
         self.ventana_z = deque(maxlen=35)
 
+    def forzar_parada(self):
+        """Reinicia los valores y limpia el historial si hay desconexión."""
+        self.pwm1_actual = 0
+        self.pwm2_actual = 0
+        self.x_filtrado = 0.0
+        self.z_filtrado = 0.0
+        self.ventana_x.clear()
+        self.ventana_z.clear()
+
     def procesar_eventos(self, lote_eventos):
         for evento in lote_eventos:
             if evento["tipo"] == "ACC":

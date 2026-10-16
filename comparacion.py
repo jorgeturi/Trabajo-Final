@@ -160,9 +160,9 @@ def comparar_sujetos_morfologia(lista_datasets, ventana_pre=0.5, ventana_post=0.
 
 # --- EJECUCIÓN ---
 lista_datasets = [
-    'dataset_levantar cejas 29-9_1790704494.csv', 
-    'dataset_levantar cejas 28-9_1790619925.csv',
-    'dataset_levantar cejas 2-10_1790963207.csv'
+    'dataset_dosparpadeos_yo_perturbado_14-10_1791998706.csv', 
+    'dataset_dosparpadeosseguidos_1789859116.csv',
+    'dataset_dosparpadeosseguidos_28-9_1790619636.csv'
 ] 
 
 comparar_sujetos_morfologia(lista_datasets)
