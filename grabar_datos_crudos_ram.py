@@ -8,7 +8,7 @@ from pythonosc import dispatcher, osc_server
 # ==========================================
 # CONFIGURACION DEL EXPERIMENTO
 # ==========================================
-nombre_movimiento = "dosparpadeos yo perturbado 14-10"
+nombre_movimiento = "2parp seguidos alejandra 16-10"
 frecuencia_teorica = 220.0
 
 # Variables globales compartidas

@@ -107,4 +107,4 @@ def analizar_ventanas_mejorado(ruta_csv):
     plt.show()
 
 # Ejecución
-analizar_ventanas_mejorado('dataset_levantar cejas yani 2-10_1790951036.csv')
+analizar_ventanas_mejorado('dataset_levantar_cejas_cuca_16-10_1792175109.csv')

@@ -9,9 +9,9 @@ import os
 # 1. CONFIGURACIÓN DEL ANÁLISIS
 # ==========================================
 # Busca el último CSV generado o escribe el nombre directo
-archivos = glob.glob("dataset_levantar cejas 2-10_1790963207.csv")
+archivos = glob.glob("dataset_levantar_cejas_cuca_16-10_1792175109.csv")
 if not archivos:
-    print("❌ No se encontraron archivos CSV que comiencen con 'dataset_'.")
+    print(" No se encontraron archivos CSV que comiencen con 'dataset_'.")
     exit()
 
 # Selecciona el archivo más reciente automáticamente
