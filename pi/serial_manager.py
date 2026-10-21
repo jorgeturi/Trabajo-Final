@@ -10,11 +10,11 @@ class PuertoSerialPico:
             self.conexion = None
             print(f"[!] Advertencia: No se pudo abrir UART ({e})")
 
-    def enviar_estado(self, tp9, fp1, fp2, tp10, pwm1, pwm2):
-        """Arma el texto con los 6 números y lo dispara por el cable"""
+    def enviar_estado(self, tp9, fp1, fp2, tp10, pwm1, pwm2, activacion=0):
+        """Arma el texto con los 7 números y lo dispara por el cable"""
         if self.conexion is not None:
-            # Formato exacto que espera la Pico: "TP9,FP1,FP2,TP10,M1,M2\n"
-            trama = f"{tp9},{fp1},{fp2},{tp10},{int(pwm1)},{int(pwm2)}\n"
+            # Formato exacto que espera la Pico: "TP9,FP1,FP2,TP10,M1,M2,ACTIVACION\n"
+            trama = f"{tp9},{fp1},{fp2},{tp10},{int(pwm1)},{int(pwm2)},{int(activacion)}\n"
             
             try:
                 self.conexion.write(trama.encode('utf-8'))

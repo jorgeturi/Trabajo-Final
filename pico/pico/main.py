@@ -76,8 +76,9 @@ while True:
             texto_limpio = ultima_trama.decode('utf-8').strip()
             valores = [int(x) for x in texto_limpio.split(',')]
             
-            if len(valores) == 6:
-                tp9, fp1, fp2, tp10, m1_porcentaje, m2_porcentaje = valores
+            if len(valores) in (6, 7):
+                tp9, fp1, fp2, tp10, m1_porcentaje, m2_porcentaje = valores[:6]
+                activacion = valores[6] if len(valores) == 7 else 0
                 valores_texto = f"{tp9},{fp1},{fp2},{tp10}"
                 
                 # REINICIAMOS EL RELOJ DE SEGURIDAD
