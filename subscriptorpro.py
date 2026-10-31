@@ -22,7 +22,11 @@ DATOS_ACTUALES = {
     "mandibula_total": 0,
     "evento_reciente": "ESPERANDO SEÑAL",
     "alpha": [0,0,0,0],
-    "beta": [0,0,0,0]
+    "beta": [0,0,0,0],
+    "deteccion": {"recibido": False, "activacion": 0, "n_gestos": 0, "calibrando": True, "via": "", "freno": "",
+                  "margen": {"TP9": 0, "FP1": 0, "FP2": 0, "TP10": 0},
+                  "ratios": {"TP9": 0, "FP1": 0, "FP2": 0, "TP10": 0},
+                  "ignorado": {"TP9": False, "FP1": False, "FP2": False, "TP10": False}}
 }
 
 def lector_zmq():
@@ -59,6 +63,12 @@ def lector_zmq():
                 if msg.get("valor") == 1:
                     DATOS_ACTUALES["mandibula_total"] += 1
                     DATOS_ACTUALES["evento_reciente"] = "MANDIBULA"
+
+            elif tipo == "DETECCION":
+                DATOS_ACTUALES["deteccion"] = {k: msg.get(k) for k in DATOS_ACTUALES["deteccion"]}
+                DATOS_ACTUALES["deteccion"]["recibido"] = True
+                if msg.get("gesto_nuevo"):
+                    DATOS_ACTUALES["evento_reciente"] = "GESTO DETECTADO"
 
             elif tipo == "OTRO":
                 address = msg.get("address", "")
@@ -264,6 +274,31 @@ def index():
                         </div>
                     </div>
                     
+                    <div class="card mb-4">
+                        <div class="card-header">Detección de gestos</div>
+                        <div class="card-body">
+                            <div class="label-row">
+                                <span class="data-label">Activación</span>
+                                <span class="data-value" id="det_activacion">--</span>
+                            </div>
+                            <div class="label-row">
+                                <span class="data-label">Gestos detectados</span>
+                                <span class="data-value" id="det_n">0</span>
+                            </div>
+                            <div class="label-row">
+                                <span class="data-label">Última ventana</span>
+                                <span class="data-value" id="det_motivo">--</span>
+                            </div>
+                            <div class="data-label mt-3 mb-1">Pico / margen (≥ 1 supera)</div>
+                            <div class="imu-grid mb-0">
+                                <div class="imu-item">TP9 <span id="det_r_tp9">0</span><br><small id="det_m_tp9"></small></div>
+                                <div class="imu-item">FP1 <span id="det_r_fp1">0</span><br><small id="det_m_fp1"></small></div>
+                                <div class="imu-item">FP2 <span id="det_r_fp2">0</span><br><small id="det_m_fp2"></small></div>
+                                <div class="imu-item">TP10 <span id="det_r_tp10">0</span><br><small id="det_m_tp10"></small></div>
+                            </div>
+                        </div>
+                    </div>
+
                     <div class="card">
                         <div class="card-header">Bandas de Frecuencia</div>
                         <div class="card-body">
@@ -312,6 +347,17 @@ def index():
                         document.getElementById('gyro_y').innerText = data.gyro.y.toFixed(1).padStart(5, ' ');
                         document.getElementById('gyro_z').innerText = data.gyro.z.toFixed(1).padStart(5, ' ');
                         
+                        const det = data.deteccion;
+                        document.getElementById('det_activacion').innerHTML = !det.recibido ? "<span class='status-err'>SIN DATOS DEL DETECTOR</span>" : det.calibrando ? "<span class='status-warn'>CALIBRANDO</span>"
+                            : (det.activacion ? "<span class='status-ok'>DETECTADO</span>" : "<span class='data-value'>0</span>");
+                        document.getElementById('det_n').innerText = det.n_gestos;
+                        document.getElementById('det_motivo').innerText = det.via ? det.via : (det.freno ? det.freno : 'sin detección');
+                        ['TP9', 'FP1', 'FP2', 'TP10'].forEach(c => {
+                            const k = c.toLowerCase();
+                            document.getElementById('det_r_' + k).innerText = (det.ratios[c] || 0).toFixed(1);
+                            document.getElementById('det_m_' + k).innerText = det.ignorado[c] ? 'ignorado' : ('margen ' + Math.round(det.margen[c]) + ' µV');
+                        });
+
                         document.getElementById('alpha').innerText = JSON.stringify(data.alpha);
                         document.getElementById('beta').innerText = JSON.stringify(data.beta);
                     });

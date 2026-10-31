@@ -1,0 +1,104 @@
+{
+  "gestos_marcados": 4,
+  "detectores": {
+    "filtro": {
+      "detecciones": 2,
+      "aciertos": 2,
+      "perdidos": 2,
+      "falsos_positivos": 0,
+      "sensibilidad": 0.5
+    },
+    "sdk": {
+      "detecciones": 10,
+      "aciertos": 3,
+      "perdidos": 1,
+      "falsos_positivos": 4,
+      "sensibilidad": 0.75
+    }
+  },
+  "contacto": {
+    "TP9": {
+      "segundos_por_estado": {
+        "1": 29.6,
+        "2": 0.0,
+        "3": 0.0,
+        "4": 0.5
+      },
+      "pct_bueno": 98.3
+    },
+    "FP1": {
+      "segundos_por_estado": {
+        "1": 28.2,
+        "2": 0.4,
+        "3": 0.0,
+        "4": 1.5
+      },
+      "pct_bueno": 94.9
+    },
+    "FP2": {
+      "segundos_por_estado": {
+        "1": 28.5,
+        "2": 0.6,
+        "3": 0.0,
+        "4": 1.0
+      },
+      "pct_bueno": 96.6
+    },
+    "TP10": {
+      "segundos_por_estado": {
+        "1": 0.0,
+        "2": 0.0,
+        "3": 0.0,
+        "4": 30.1
+      },
+      "pct_bueno": 0.0
+    }
+  },
+  "rangos": [
+    {
+      "n": 1,
+      "ini": 5.82,
+      "dur": 3.81,
+      "filtro": 1,
+      "sdk": 1,
+      "contacto_TP9": 4,
+      "contacto_FP1": 4,
+      "contacto_FP2": 4,
+      "contacto_TP10": 4
+    },
+    {
+      "n": 2,
+      "ini": 15.81,
+      "dur": 2.69,
+      "filtro": 1,
+      "sdk": 1,
+      "contacto_TP9": 4,
+      "contacto_FP1": 4,
+      "contacto_FP2": 4,
+      "contacto_TP10": 4
+    },
+    {
+      "n": 3,
+      "ini": 19.3,
+      "dur": 0.15,
+      "filtro": 0,
+      "sdk": 1,
+      "contacto_TP9": 1,
+      "contacto_FP1": 1,
+      "contacto_FP2": 1,
+      "contacto_TP10": 4
+    },
+    {
+      "n": 4,
+      "ini": 28.73,
+      "dur": 3.31,
+      "filtro": 0,
+      "sdk": 0,
+      "contacto_TP9": 1,
+      "contacto_FP1": 1,
+      "contacto_FP2": 1,
+      "contacto_TP10": 4
+    }
+  ],
+  "mandibula_eventos": 11
+}

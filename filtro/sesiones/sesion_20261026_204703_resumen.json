@@ -1,0 +1,71 @@
+{
+  "gestos_marcados": 1,
+  "detectores": {
+    "filtro": {
+      "detecciones": 5,
+      "aciertos": 0,
+      "perdidos": 1,
+      "falsos_positivos": 5,
+      "sensibilidad": 0.0
+    },
+    "sdk": {
+      "detecciones": 24,
+      "aciertos": 0,
+      "perdidos": 1,
+      "falsos_positivos": 24,
+      "sensibilidad": 0.0
+    }
+  },
+  "contacto": {
+    "TP9": {
+      "segundos_por_estado": {
+        "1": 125.4,
+        "2": 0.0,
+        "3": 0.0,
+        "4": 2.1
+      },
+      "pct_bueno": 98.4
+    },
+    "FP1": {
+      "segundos_por_estado": {
+        "1": 126.1,
+        "2": 0.4,
+        "3": 0.0,
+        "4": 0.9
+      },
+      "pct_bueno": 99.3
+    },
+    "FP2": {
+      "segundos_por_estado": {
+        "1": 122.0,
+        "2": 2.3,
+        "3": 0.0,
+        "4": 3.1
+      },
+      "pct_bueno": 97.5
+    },
+    "TP10": {
+      "segundos_por_estado": {
+        "1": 4.1,
+        "2": 0.0,
+        "3": 0.0,
+        "4": 123.4
+      },
+      "pct_bueno": 3.2
+    }
+  },
+  "rangos": [
+    {
+      "n": 1,
+      "ini": 102.12,
+      "dur": 4.73,
+      "filtro": 0,
+      "sdk": 0,
+      "contacto_TP9": 1,
+      "contacto_FP1": 1,
+      "contacto_FP2": 1,
+      "contacto_TP10": 4
+    }
+  ],
+  "mandibula_eventos": 5
+}

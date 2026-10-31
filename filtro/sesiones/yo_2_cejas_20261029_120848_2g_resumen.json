@@ -1,0 +1,346 @@
+{
+  "gestos_marcados": 26,
+  "detectores": {
+    "filtro": {
+      "detecciones": 20,
+      "aciertos": 19,
+      "perdidos": 7,
+      "falsos_positivos": 1,
+      "sensibilidad": 0.7307692307692307
+    },
+    "sdk": {
+      "detecciones": 75,
+      "aciertos": 25,
+      "perdidos": 1,
+      "falsos_positivos": 23,
+      "sensibilidad": 0.9615384615384616
+    }
+  },
+  "contacto": {
+    "TP9": {
+      "segundos_por_estado": {
+        "1": 177.9,
+        "2": 0.0,
+        "3": 0.0,
+        "4": 20.8
+      },
+      "pct_bueno": 89.5
+    },
+    "FP1": {
+      "segundos_por_estado": {
+        "1": 39.8,
+        "2": 7.3,
+        "3": 0.0,
+        "4": 151.5
+      },
+      "pct_bueno": 23.7
+    },
+    "FP2": {
+      "segundos_por_estado": {
+        "1": 177.9,
+        "2": 5.5,
+        "3": 0.0,
+        "4": 15.2
+      },
+      "pct_bueno": 92.4
+    },
+    "TP10": {
+      "segundos_por_estado": {
+        "1": 176.5,
+        "2": 0.0,
+        "3": 0.0,
+        "4": 22.2
+      },
+      "pct_bueno": 88.8
+    }
+  },
+  "rangos": [
+    {
+      "n": 1,
+      "ini": 30.58,
+      "dur": 2.57,
+      "filtro": 1,
+      "sdk": 1,
+      "contacto_TP9": 4,
+      "contacto_FP1": 4,
+      "contacto_FP2": 4,
+      "contacto_TP10": 4
+    },
+    {
+      "n": 2,
+      "ini": 56.77,
+      "dur": 1.81,
+      "filtro": 1,
+      "sdk": 1,
+      "contacto_TP9": 4,
+      "contacto_FP1": 4,
+      "contacto_FP2": 4,
+      "contacto_TP10": 4
+    },
+    {
+      "n": 3,
+      "ini": 71.36,
+      "dur": 2.14,
+      "filtro": 0,
+      "sdk": 1,
+      "contacto_TP9": 4,
+      "contacto_FP1": 4,
+      "contacto_FP2": 4,
+      "contacto_TP10": 4
+    },
+    {
+      "n": 4,
+      "ini": 77.7,
+      "dur": 1.84,
+      "filtro": 1,
+      "sdk": 1,
+      "contacto_TP9": 4,
+      "contacto_FP1": 4,
+      "contacto_FP2": 4,
+      "contacto_TP10": 4
+    },
+    {
+      "n": 5,
+      "ini": 83.52,
+      "dur": 1.7,
+      "filtro": 1,
+      "sdk": 1,
+      "contacto_TP9": 4,
+      "contacto_FP1": 4,
+      "contacto_FP2": 4,
+      "contacto_TP10": 4
+    },
+    {
+      "n": 6,
+      "ini": 88.14,
+      "dur": 2.64,
+      "filtro": 1,
+      "sdk": 1,
+      "contacto_TP9": 4,
+      "contacto_FP1": 4,
+      "contacto_FP2": 4,
+      "contacto_TP10": 4
+    },
+    {
+      "n": 7,
+      "ini": 92.78,
+      "dur": 1.9,
+      "filtro": 0,
+      "sdk": 1,
+      "contacto_TP9": 4,
+      "contacto_FP1": 4,
+      "contacto_FP2": 4,
+      "contacto_TP10": 4
+    },
+    {
+      "n": 8,
+      "ini": 95.14,
+      "dur": 3.32,
+      "filtro": 0,
+      "sdk": 1,
+      "contacto_TP9": 4,
+      "contacto_FP1": 4,
+      "contacto_FP2": 4,
+      "contacto_TP10": 4
+    },
+    {
+      "n": 9,
+      "ini": 100.84,
+      "dur": 2.47,
+      "filtro": 1,
+      "sdk": 1,
+      "contacto_TP9": 4,
+      "contacto_FP1": 4,
+      "contacto_FP2": 4,
+      "contacto_TP10": 4
+    },
+    {
+      "n": 10,
+      "ini": 104.61,
+      "dur": 1.48,
+      "filtro": 1,
+      "sdk": 1,
+      "contacto_TP9": 4,
+      "contacto_FP1": 4,
+      "contacto_FP2": 4,
+      "contacto_TP10": 4
+    },
+    {
+      "n": 11,
+      "ini": 107.1,
+      "dur": 0.2,
+      "filtro": 0,
+      "sdk": 0,
+      "contacto_TP9": 1,
+      "contacto_FP1": 4,
+      "contacto_FP2": 1,
+      "contacto_TP10": 1
+    },
+    {
+      "n": 12,
+      "ini": 115.35,
+      "dur": 1.39,
+      "filtro": 1,
+      "sdk": 1,
+      "contacto_TP9": 4,
+      "contacto_FP1": 4,
+      "contacto_FP2": 4,
+      "contacto_TP10": 4
+    },
+    {
+      "n": 13,
+      "ini": 119.82,
+      "dur": 2.19,
+      "filtro": 1,
+      "sdk": 1,
+      "contacto_TP9": 4,
+      "contacto_FP1": 4,
+      "contacto_FP2": 4,
+      "contacto_TP10": 4
+    },
+    {
+      "n": 14,
+      "ini": 122.9,
+      "dur": 1.11,
+      "filtro": 1,
+      "sdk": 1,
+      "contacto_TP9": 1,
+      "contacto_FP1": 4,
+      "contacto_FP2": 1,
+      "contacto_TP10": 1
+    },
+    {
+      "n": 15,
+      "ini": 126.13,
+      "dur": 0.22,
+      "filtro": 0,
+      "sdk": 1,
+      "contacto_TP9": 1,
+      "contacto_FP1": 4,
+      "contacto_FP2": 1,
+      "contacto_TP10": 1
+    },
+    {
+      "n": 16,
+      "ini": 127.48,
+      "dur": 1.2,
+      "filtro": 1,
+      "sdk": 1,
+      "contacto_TP9": 4,
+      "contacto_FP1": 4,
+      "contacto_FP2": 4,
+      "contacto_TP10": 4
+    },
+    {
+      "n": 17,
+      "ini": 130.86,
+      "dur": 1.21,
+      "filtro": 1,
+      "sdk": 1,
+      "contacto_TP9": 1,
+      "contacto_FP1": 4,
+      "contacto_FP2": 1,
+      "contacto_TP10": 1
+    },
+    {
+      "n": 18,
+      "ini": 134.15,
+      "dur": 1.62,
+      "filtro": 1,
+      "sdk": 1,
+      "contacto_TP9": 4,
+      "contacto_FP1": 4,
+      "contacto_FP2": 4,
+      "contacto_TP10": 4
+    },
+    {
+      "n": 19,
+      "ini": 136.88,
+      "dur": 1.58,
+      "filtro": 1,
+      "sdk": 1,
+      "contacto_TP9": 1,
+      "contacto_FP1": 4,
+      "contacto_FP2": 1,
+      "contacto_TP10": 1
+    },
+    {
+      "n": 20,
+      "ini": 140.18,
+      "dur": 1.74,
+      "filtro": 1,
+      "sdk": 1,
+      "contacto_TP9": 4,
+      "contacto_FP1": 4,
+      "contacto_FP2": 4,
+      "contacto_TP10": 4
+    },
+    {
+      "n": 21,
+      "ini": 171.58,
+      "dur": 2.02,
+      "filtro": 1,
+      "sdk": 1,
+      "contacto_TP9": 4,
+      "contacto_FP1": 4,
+      "contacto_FP2": 4,
+      "contacto_TP10": 4
+    },
+    {
+      "n": 22,
+      "ini": 174.61,
+      "dur": 2.12,
+      "filtro": 1,
+      "sdk": 1,
+      "contacto_TP9": 4,
+      "contacto_FP1": 4,
+      "contacto_FP2": 4,
+      "contacto_TP10": 4
+    },
+    {
+      "n": 23,
+      "ini": 184.3,
+      "dur": 2.06,
+      "filtro": 1,
+      "sdk": 1,
+      "contacto_TP9": 4,
+      "contacto_FP1": 4,
+      "contacto_FP2": 4,
+      "contacto_TP10": 4
+    },
+    {
+      "n": 24,
+      "ini": 188.35,
+      "dur": 1.94,
+      "filtro": 0,
+      "sdk": 1,
+      "contacto_TP9": 4,
+      "contacto_FP1": 4,
+      "contacto_FP2": 4,
+      "contacto_TP10": 4
+    },
+    {
+      "n": 25,
+      "ini": 192.19,
+      "dur": 1.94,
+      "filtro": 0,
+      "sdk": 1,
+      "contacto_TP9": 4,
+      "contacto_FP1": 4,
+      "contacto_FP2": 4,
+      "contacto_TP10": 4
+    },
+    {
+      "n": 26,
+      "ini": 195.86,
+      "dur": 1.44,
+      "filtro": 1,
+      "sdk": 1,
+      "contacto_TP9": 1,
+      "contacto_FP1": 4,
+      "contacto_FP2": 1,
+      "contacto_TP10": 1
+    }
+  ],
+  "mandibula_eventos": 223
+}

@@ -1,5 +1,10 @@
 # config.py - valores ajustables de la detección EEG y de los motores
 
+# --- Qué detector produce la activación ---
+# "adaptativo": filtro de detector_gestos.py (umbral por canal, 2 ráfagas); publica paquetes DETECCION por ZMQ.
+# "umbral": el detector simple de abajo (UMBRAL_TP / UMBRAL_FP fijos).
+DETECTOR = "adaptativo"
+
 # --- Detección EEG (flag que se envía a la Pico) ---
 BANDA_DETECTOR = (1.5, 30.0)   # Hz, pasabanda de la señal usada para el umbral
 VENTANA_EEG = 100              # muestras de la ventana deslizante

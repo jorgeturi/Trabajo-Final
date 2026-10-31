@@ -1,0 +1,159 @@
+{
+  "gestos_marcados": 9,
+  "detectores": {
+    "filtro": {
+      "detecciones": 8,
+      "aciertos": 8,
+      "perdidos": 1,
+      "falsos_positivos": 0,
+      "sensibilidad": 0.8888888888888888
+    },
+    "sdk": {
+      "detecciones": 107,
+      "aciertos": 8,
+      "perdidos": 1,
+      "falsos_positivos": 80,
+      "sensibilidad": 0.8888888888888888
+    }
+  },
+  "contacto": {
+    "TP9": {
+      "segundos_por_estado": {
+        "1": 66.8,
+        "2": 0.0,
+        "3": 0.0,
+        "4": 86.3
+      },
+      "pct_bueno": 43.6
+    },
+    "FP1": {
+      "segundos_por_estado": {
+        "1": 30.5,
+        "2": 14.7,
+        "3": 0.0,
+        "4": 108.0
+      },
+      "pct_bueno": 29.5
+    },
+    "FP2": {
+      "segundos_por_estado": {
+        "1": 143.7,
+        "2": 2.3,
+        "3": 0.0,
+        "4": 7.2
+      },
+      "pct_bueno": 95.3
+    },
+    "TP10": {
+      "segundos_por_estado": {
+        "1": 102.8,
+        "2": 0.0,
+        "3": 0.0,
+        "4": 50.3
+      },
+      "pct_bueno": 67.1
+    }
+  },
+  "rangos": [
+    {
+      "n": 1,
+      "ini": 38.44,
+      "dur": 2.85,
+      "filtro": 1,
+      "sdk": 1,
+      "contacto_TP9": 4,
+      "contacto_FP1": 4,
+      "contacto_FP2": 4,
+      "contacto_TP10": 4
+    },
+    {
+      "n": 2,
+      "ini": 52.35,
+      "dur": 2.54,
+      "filtro": 1,
+      "sdk": 0,
+      "contacto_TP9": 4,
+      "contacto_FP1": 4,
+      "contacto_FP2": 4,
+      "contacto_TP10": 4
+    },
+    {
+      "n": 3,
+      "ini": 82.62,
+      "dur": 2.3,
+      "filtro": 1,
+      "sdk": 1,
+      "contacto_TP9": 4,
+      "contacto_FP1": 4,
+      "contacto_FP2": 4,
+      "contacto_TP10": 4
+    },
+    {
+      "n": 4,
+      "ini": 97.81,
+      "dur": 1.57,
+      "filtro": 1,
+      "sdk": 1,
+      "contacto_TP9": 4,
+      "contacto_FP1": 4,
+      "contacto_FP2": 4,
+      "contacto_TP10": 4
+    },
+    {
+      "n": 5,
+      "ini": 111.5,
+      "dur": 2.2,
+      "filtro": 1,
+      "sdk": 1,
+      "contacto_TP9": 4,
+      "contacto_FP1": 4,
+      "contacto_FP2": 4,
+      "contacto_TP10": 4
+    },
+    {
+      "n": 6,
+      "ini": 128.52,
+      "dur": 2.84,
+      "filtro": 1,
+      "sdk": 1,
+      "contacto_TP9": 4,
+      "contacto_FP1": 4,
+      "contacto_FP2": 4,
+      "contacto_TP10": 4
+    },
+    {
+      "n": 7,
+      "ini": 137.64,
+      "dur": 1.62,
+      "filtro": 1,
+      "sdk": 1,
+      "contacto_TP9": 4,
+      "contacto_FP1": 4,
+      "contacto_FP2": 4,
+      "contacto_TP10": 4
+    },
+    {
+      "n": 8,
+      "ini": 141.55,
+      "dur": 2.4,
+      "filtro": 0,
+      "sdk": 1,
+      "contacto_TP9": 4,
+      "contacto_FP1": 4,
+      "contacto_FP2": 4,
+      "contacto_TP10": 4
+    },
+    {
+      "n": 9,
+      "ini": 148.27,
+      "dur": 1.98,
+      "filtro": 1,
+      "sdk": 1,
+      "contacto_TP9": 4,
+      "contacto_FP1": 4,
+      "contacto_FP2": 4,
+      "contacto_TP10": 4
+    }
+  ],
+  "mandibula_eventos": 363
+}

@@ -2,6 +2,8 @@
 import zmq
 import threading
 import time
+import queue
+import traceback
 from collections import deque
 import numpy as np
 from scipy import signal
@@ -74,6 +76,51 @@ def reiniciar_activacion():
     for c in zi_det:
         zi_det[c] = None
         ventana_det[c].clear()
+
+# --- Detector adaptativo (detector_gestos.py) en su propio hilo: no frena el bucle de motores ni la UART ---
+USA_ADAPTATIVO = (config.DETECTOR == "adaptativo")
+cola_det = queue.Queue(maxsize=400)          # lotes EEG pendientes (~20 s); si se llena se descarta el lote nuevo
+estado_det = {"activacion": 0, "limpio": True, "fallo": False}
+
+def hilo_detector():
+    try:
+        from detector_gestos import DetectorGestos
+        detector = DetectorGestos(fs)
+    except Exception:
+        traceback.print_exc()
+        print("[ERROR] No arranca el detector adaptativo (falta detector_gestos.py o pandas?). Se usa el detector simple de umbral fijo.", flush=True)
+        estado_det["fallo"] = True
+        return
+    print("[INFO] Detector adaptativo listo (calibra durante los primeros ~6 s de señal).", flush=True)
+    while True:
+        lote = cola_det.get()
+        try:
+            if lote is None:                 # vincha desconectada: se vuelve a calibrar al reconectar
+                detector.reiniciar()
+                estado_det["activacion"] = 0
+                continue
+            t0 = time.perf_counter()
+            paquetes = detector.procesar(lote)
+            ms = round((time.perf_counter() - t0) * 1000, 1)
+            for paquete in paquetes:
+                paquete["ms"] = ms                   # cuanto tardo decidir (si se acerca a 250 ms no llega en tiempo real)
+                paquete["cola"] = cola_det.qsize()   # lotes esperando: si crece, el detector se atrasa
+                estado_det["activacion"] = paquete["activacion"]
+                with zmq_lock:
+                    zmq_socket.send_json(paquete)
+        except Exception:
+            traceback.print_exc()            # el hilo sigue vivo aunque falle una ventana
+
+def reiniciar_deteccion():
+    """Pone a cero la activación y reinicia el detector (una sola vez por desconexión)."""
+    reiniciar_activacion()
+    if USA_ADAPTATIVO and not estado_det["fallo"] and not estado_det["limpio"]:
+        estado_det["limpio"] = True
+        estado_det["activacion"] = 0
+        try:
+            cola_det.put_nowait(None)
+        except queue.Full:
+            pass
 
 # ==========================================
 # 3. HANDLERS OSC (Mismos que antes)
@@ -150,13 +197,21 @@ def hilo_procesador_bci():
                 contacto_tp10 = evento['TP10']
 
         # Flag de activación (EEG filtrado 1.5-30 Hz, ventana deslizante)
-        if lote_eeg:
+        if USA_ADAPTATIVO and not estado_det["fallo"]:
+            if lote_eeg:
+                estado_det["limpio"] = False
+                try:
+                    cola_det.put_nowait(list(lote_eeg))
+                except queue.Full:
+                    pass
+            activacion = estado_det["activacion"]
+        elif lote_eeg:
             activacion = actualizar_activacion(list(zip(*lote_eeg)))
 
         # --- LOGICA DE CORTE POR DESCONEXION ---
         if (time.time() - tiempo_ultimo_dato) > TIMEOUT_VINCHA:
             activacion = 0
-            reiniciar_activacion()
+            reiniciar_deteccion()
             pwm1 = 0
             pwm2 = 0
             contacto_tp9 = 4
@@ -232,6 +287,8 @@ print(" Nodo Edge BCI - RASPBERRY PI MODULAR")
 print(f" ZMQ y UDP Espejo Activados")
 print("===================================================")
 
+if USA_ADAPTATIVO:
+    threading.Thread(target=hilo_detector, daemon=True).start()
 threading.Thread(target=hilo_procesador_bci, daemon=True).start()
 
 try:

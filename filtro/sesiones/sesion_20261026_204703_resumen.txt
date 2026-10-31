@@ -1,0 +1,17 @@
+Gestos marcados con la barra espaciadora: 1
+
+detector detecciones  aciertos  perdidos  falsos+  sensib.
+filtro             5         0         1        5       0%
+sdk               24         0         1       24       0%
+
+Eventos de mandibula (SDK): 5
+
+Contacto por sensor (1 bueno, 2 aceptable, 3 malo, 4 sin contacto):
+  TP9   segundos por estado {'1': 125.4, '2': 0.0, '3': 0.0, '4': 2.1}  -> 98.4% con contacto util
+  FP1   segundos por estado {'1': 126.1, '2': 0.4, '3': 0.0, '4': 0.9}  -> 99.3% con contacto util
+  FP2   segundos por estado {'1': 122.0, '2': 2.3, '3': 0.0, '4': 3.1}  -> 97.5% con contacto util
+  TP10  segundos por estado {'1': 4.1, '2': 0.0, '3': 0.0, '4': 123.4}  -> 3.2% con contacto util
+
+Por gesto (contacto = peor estado de cada sensor durante el gesto):
+  n   ini(s)   dur  filtro  sdk     TP9   FP1   FP2  TP10
+  1    102.1   4.7       0    0       1     1     1     4

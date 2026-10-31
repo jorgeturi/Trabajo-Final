@@ -1,0 +1,1 @@
+2 h 40 min funcionando sin problema de forma intermitente con vincha (conectando y desconectando)
