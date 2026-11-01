@@ -131,8 +131,13 @@ class P:
     sep_pulso_s: float = 0.12       # sin superacion durante este tiempo = rafagas distintas
     doble_s: float = 2.5            # las rafagas deben caer dentro de este tiempo
     consumir_pulsos: bool = True    # al contar un gesto se descartan sus rafagas: el siguiente necesita dos rafagas NUEVAS
+    bloqueo_post_s: float = 0.0     # si > 0, las rafagas que lleguen dentro de este tiempo despues de contar un gesto tampoco cuentan (0 = no; con 1 s se
+                                    # pierden los intentos que se hacen enseguida de otro: 45 -> 43 de 62 marcas)
     exigir_contacto: bool = True    # sin contacto en los frontales (horseshoe) no se detecta: la vincha no esta puesta
     contacto_min_s: float = 0.5     # el sin contacto debe durar al menos esto (una ventana): un gesto lo produce un instante
+    rearme_s: float = 1.0           # tras volver el contacto sigue bloqueado este tiempo (el asentamiento de la vincha da artefactos)
+    reinicio_s: float = 2.0         # si estuvo sin contacto al menos esto, al volver se vuelve a calibrar (la señal y el ruido son otros)
+    bloquear_calibracion: bool = True   # mientras calibra (arranque o reinicio) no se detecta: el margen de partida es solo un valor provisorio
     evid_th: dict = field(default_factory=lambda: {'der_F': 10.6, 'hp_F': 11.0, 'lp_F': 10.3, 'ncc_F': 0.59,
                                                    'corrFF': 0.69, 'corrTT': 0.86, 'corrFT': 0.41})
 
@@ -269,19 +274,21 @@ class FlujoSenales:
         self.tpl = tpl / np.linalg.norm(tpl)
         self.L = L
 
-    def _filtrar(self, nombre, sos, i, x):
-        if (nombre, i) not in self.zi:
-            self.zi[(nombre, i)] = signal.sosfilt_zi(sos) * x[0]    # estado inicial escalado a la 1a muestra
-        y, self.zi[(nombre, i)] = signal.sosfilt(sos, x, zi=self.zi[(nombre, i)])
+    def _filtrar(self, nombre, sos, x):
+        """Filtra los 4 canales (x: (4, m)) con una sola llamada a sosfilt; cada canal conserva su propio estado."""
+        z = self.zi.get(nombre)
+        if z is None:
+            z = signal.sosfilt_zi(sos)[:, None, :] * x[:, 0][None, :, None]    # estado inicial escalado a la 1a muestra de cada canal
+        y, self.zi[nombre] = signal.sosfilt(sos, x, axis=-1, zi=z)
         return y
 
     def agregar(self, muestras):
         x = np.asarray(muestras, dtype=float).reshape(-1, 4).T      # (4, m)
         if x.shape[1] == 0:
             return
-        sig = np.vstack([self._filtrar('b', self.sos, i, x[i]) for i in range(4)])
-        lp = np.vstack([self._filtrar('lp', self.sos_lp, i, x[i]) for i in range(4)])
-        hp = np.vstack([self._filtrar('hp', self.sos_hp, i, x[i]) for i in range(4)]) if self.sos_hp is not None else np.zeros_like(x)
+        sig = self._filtrar('b', self.sos, x)
+        lp = self._filtrar('lp', self.sos_lp, x)
+        hp = self._filtrar('hp', self.sos_hp, x) if self.sos_hp is not None else np.zeros_like(x)
         self.raw = np.hstack([self.raw, x])[:, -self.H:]
         self.sig = np.hstack([self.sig, sig])[:, -self.H:]
         self.lp = np.hstack([self.lp, lp])[:, -self.H:]
@@ -304,28 +311,46 @@ class FlujoSenales:
             e = _mediana_movil(a, n10, nmin, sh, cola, salto=max(1, int(0.05 * fs)))
             return np.maximum(np.nan_to_num(e, nan=1e9), 1e-3)
 
-        d = {}
+        def evidencias_series(d):
+            for i, c in enumerate(FRONTALES):
+                i = CAN.index(c)
+                sg = self.sig[i]
+                der = np.abs(np.diff(sg, prepend=sg[0])) * fs
+                d['EV_der_' + c] = der / mediana(der)
+                if self.sos_hp is not None:
+                    a = np.abs(self.hp[i] - rm(self.hp[i]))
+                    d['EV_hp_' + c] = a / mediana(a)
+                else:
+                    d['EV_hp_' + c] = np.zeros(len(sg))
+                lp = self.lp[i]
+                dl = np.abs(lp - rm(lp))
+                d['EV_lp_' + c] = dl / mediana(dl)
+                conv = signal.fftconvolve(sg, self.tpl[::-1], mode='full')[:len(sg)]
+                en = np.sqrt(np.maximum(_suma_movil(sg ** 2, self.L), 1e-9))
+                d['EV_ncc_' + c] = np.abs(conv) / en
+
+        d = _SeriesPerezosas(evidencias_series)
         for i, c in enumerate(CAN):
             sg = self.sig[i]
             d[c] = np.abs(sg - rm(sg))                         # desplazamiento |señal - base| (base = promedio de 2 s)
             d['SIG_' + c] = sg
             d['RAW_' + c] = self.raw[i]
-            if c not in FRONTALES:
-                continue
-            der = np.abs(np.diff(sg, prepend=sg[0])) * fs
-            d['EV_der_' + c] = der / mediana(der)
-            if self.sos_hp is not None:
-                a = np.abs(self.hp[i] - rm(self.hp[i]))
-                d['EV_hp_' + c] = a / mediana(a)
-            else:
-                d['EV_hp_' + c] = np.zeros(len(sg))
-            lp = self.lp[i]
-            dl = np.abs(lp - rm(lp))
-            d['EV_lp_' + c] = dl / mediana(dl)
-            conv = signal.fftconvolve(sg, self.tpl[::-1], mode='full')[:len(sg)]
-            en = np.sqrt(np.maximum(_suma_movil(sg ** 2, self.L), 1e-9))
-            d['EV_ncc_' + c] = np.abs(conv) / en
         return d
+
+
+class _SeriesPerezosas(dict):
+    """Series de una ventana. Las de evidencias (EV_*) son las mas caras (medianas de 10 s) y la mayoria de las ventanas no las
+    necesitan: se calculan la primera vez que alguien las pide, con el mismo resultado que si se hubieran calculado antes."""
+
+    def __init__(self, calcular):
+        super().__init__()
+        self._calcular = calcular
+
+    def __missing__(self, clave):
+        if clave.startswith('EV_'):
+            self._calcular(self)
+            return self[clave]
+        raise KeyError(clave)
 
 
 # ==========================================
@@ -364,6 +389,10 @@ class MotorGestos:
         self.n_sep_pulso = int(p.sep_pulso_s * fs)
         self.consumido = -10 ** 9                    # muestra hasta la que las rafagas ya se usaron en un gesto contado
         self.sin_cont_desde = None                   # muestra desde la que los dos frontales estan sin contacto (None = hay contacto o no se sabe)
+        self.sin_frente_desde = None                 # muestra desde la que touching_forehead vale 0 (vincha fuera de la frente)
+        self.sin_vincha_desde = None                 # muestra desde la que se considera la vincha sacada (sin contacto sostenido)
+        self.rearme_hasta = -1                       # muestra hasta la que sigue bloqueado despues de volver el contacto
+        self.n_reinicios = 0                         # veces que se volvio a calibrar por sacar y poner la vincha
         self.n_cont = int(p.contacto_min_s * fs)
         self.ultimo_exceso = {c: -10 ** 9 for c in CAN}
         self.ignorado = {c: False for c in CAN}
@@ -426,6 +455,37 @@ class MotorGestos:
         else:
             self.sin_cont_desde = None
 
+    def set_frente(self, valor):
+        """/muse/elements/touching_forehead (1 = la vincha toca la frente, 0 = no): el contacto general de la vincha. Sin datos nunca bloquea."""
+        if valor is None:
+            return
+        if int(valor) == 0:
+            if self.sin_frente_desde is None:
+                self.sin_frente_desde = self.flujo.n
+        else:
+            self.sin_frente_desde = None
+
+    def _reiniciar(self, fin):
+        """Vuelve a calibrar desde `fin` (se sacó la vincha un rato): olvida el ruido, los margenes y todo lo pendiente."""
+        p, fs = self.p, self.fs
+        self.margen = {c: p.margen_inicial for c in CAN}
+        self.ruido = {c: None for c in CAN}
+        self.pico_r = {c: None for c in CAN}
+        self.cuenta = {c: 0 for c in CAN}
+        self.largos = {c: deque(maxlen=max(1, int(round(p.piso_vent_s / p.paso_s)))) for c in CAN}
+        self.recientes = {c: deque(maxlen=max(1, int(round(p.mem_pico_s / p.paso_s)))) for c in CAN}
+        self.spk = {c: None for c in CAN}
+        self.cal_n = {c: [] for c in CAN}
+        self.cal_p = {c: [] for c in CAN}
+        self.ult_det = [-10 ** 9, 0.0]
+        self.pulsos = []
+        self.consumido = fin
+        self.ultimo_exceso = {c: -10 ** 9 for c in CAN}
+        self.ignorado = {c: False for c in CAN}
+        self.activa_hasta = -1
+        self.fin_calib = fin + int((p.skip_s + p.calib_s) * fs)
+        self.n_reinicios += 1
+
     def salida(self):
         """1 mientras dure la retencion de la ultima deteccion (mantener_s)."""
         return int(self.flujo.n < self.activa_hasta)
@@ -433,7 +493,20 @@ class MotorGestos:
     def _paso(self, fin, desp, off):
         p, fs, W = self.p, self.fs, self.W
         fl = fin - off                                # indice local en la historia
+        # vincha puesta o no: sin contacto en los dos frontales, o touching_forehead en 0, durante al menos una ventana
+        sin_cont = p.exigir_contacto and ((self.sin_cont_desde is not None and fin - self.sin_cont_desde >= self.n_cont) or
+                                          (self.sin_frente_desde is not None and fin - self.sin_frente_desde >= self.n_cont))
+        if sin_cont:
+            if self.sin_vincha_desde is None:
+                self.sin_vincha_desde = fin
+            self.rearme_hasta = fin + int(p.rearme_s * fs)
+        elif self.sin_vincha_desde is not None:
+            if fin - self.sin_vincha_desde >= int(p.reinicio_s * fs):
+                self._reiniciar(fin)                  # estuvo sacada un rato: se vuelve a calibrar
+            self.sin_vincha_desde = None
         calibrando = fin < self.fin_calib
+        bloqueo = ('vincha sin contacto' if sin_cont else 'vincha recien puesta' if fin < self.rearme_hasta else
+                   'calibrando' if (calibrando and p.bloquear_calibracion) else '')
         margen, ruido, ignorado = self.margen, self.ruido, self.ignorado
         clase, sup, nivel, pico, sobre = {}, {}, {}, {}, {}
         for c in CAN:
@@ -535,23 +608,21 @@ class MotorGestos:
                 det = False
                 via, freno = '', freno or 'saturacion (3 o mas canales tocan el limite del sensor)'
         # capa de evidencias paralelas: rescata si hay un frontal activo y al menos evid_k de 7 evidencias sobre su umbral
-        votos = 0
-        if p.evid_k > 0:
+        votos = 0                                    # solo se calcula si la ventana lo necesita (es lo mas caro): 0 = no se calculo
+        if p.evid_k > 0 and not det and not calibrando and max(pico[c] / margen[c] for c in FRONTALES) >= p.evid_amin:
             evd = evidencias(desp, fl, W)
             votos = sum(evd[n] > p.evid_th[n] for n in p.evid_th)
-            f_amp = max(pico[c] / margen[c] for c in FRONTALES)
-            if not det and not calibrando and f_amp >= p.evid_amin and votos >= p.evid_k:
+            if votos >= p.evid_k:
                 det = True
                 via = f'evidencias paralelas ({votos} de 7 votos)'
-        # sin contacto en los frontales (vincha no puesta): no hay gesto. Debe durar una ventana: un gesto lo produce un instante
-        sin_cont = p.exigir_contacto and self.sin_cont_desde is not None and fin - self.sin_cont_desde >= self.n_cont
-        if det and sin_cont:
+        # vincha sacada, recien puesta o calibrando: no hay gesto (ni se guardan rafagas) y la bandera del gesto previo queda en 0
+        if det and bloqueo:
             det = False
-            via, freno = '', freno or 'vincha sin contacto (los dos frontales)'
+            via, freno = '', freno or bloqueo
         # pulsos: un gesto solo cuenta si hubo n_pulsos rafagas separadas (frontal y temporal sobre el margen a la vez) dentro de doble_s
         if p.n_pulsos > 1:
-            if sin_cont:
-                self.pulsos = []                     # lo que pase sin la vincha puesta no cuenta para ningun gesto
+            if bloqueo:
+                self.pulsos = []                     # lo que pase sin la vincha puesta (o calibrando) no cuenta para ningun gesto
                 self.consumido = max(self.consumido, fin)
             else:
                 vacio = np.zeros(W, dtype=bool)
@@ -581,7 +652,7 @@ class MotorGestos:
                 self.ult_det[0], self.ult_det[1] = fin, fuerza
         det = bool(det)
         if det and p.n_pulsos > 1 and p.consumir_pulsos:
-            self.consumido = fin                     # las rafagas de este gesto no se reutilizan como primer disparo del siguiente
+            self.consumido = fin + int(p.bloqueo_post_s * fs)    # las rafagas de este gesto (y las que sigan enseguida) no se reutilizan como primer disparo del siguiente
             self.pulsos = []
         if det:
             for c in CAN:
@@ -649,7 +720,8 @@ class MotorGestos:
                 self.v_ign[i, fut] = ignorado[c]
             if det:
                 self.v_det[np.arange(fin - W, fin) % self.R] = True
-        self.ultima = {'fin': fin, 't': fin / fs, 'det': det, 'calibrando': calibrando, 'ratios': ratios, 'votos': votos,
+        previo = int(p.n_pulsos > 1 and any(q[1] >= fin - int(p.doble_s * fs) for q in self.pulsos))     # 1 = hay un gesto esperando su pareja
+        self.ultima = {'fin': fin, 't': fin / fs, 'det': det, 'calibrando': calibrando, 'ratios': ratios, 'votos': votos, 'previo': previo,
                        'margen': dict(margen), 'ignorado': dict(ignorado), 'via': via if det else '', 'freno': '' if det else freno,
                        'estado': estado}
         return self.ultima
@@ -717,6 +789,10 @@ class Registro:
         for c in CAN:
             if c in vals:
                 self.contacto[c].append((t, int(vals[c])))
+        estado = ' '.join(f"{c}={int(vals[c])}" for c in CAN if c in vals)
+        if estado != getattr(self, '_ult_contacto', None):          # se anota solo cuando cambia: sirve para medir cuanto dura un falso contacto
+            self._ult_contacto = estado
+            self.log.append((t, 'contacto', estado))
 
     def contacto_en(self, c, t):
         """Ultimo valor de contacto del sensor c en el instante t (4 si no hay datos)."""
@@ -917,6 +993,8 @@ class Sesion:
         elif tipo == 'JAW_CLENCH':
             if int(msg.get('valor', 0)) == 1:
                 self.reg.det_mandibula(t)
+        elif tipo == 'FRENTE':
+            self.motor.set_frente(msg.get('valor'))
         elif tipo == 'HORSESHOE':
             vals = {c: int(msg.get(c, 4)) for c in CAN}
             self.contacto.update(vals)

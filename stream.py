@@ -30,7 +30,7 @@ buffer_eeg = []
 buffer_eventos = []
 buffer_lock = threading.Lock()
 
-factor_submuestreo_zmq = 1 
+factor_submuestreo_zmq = 1
 contador_submuestreo = 0
 
 # Inicializamos el puerto y la lógica de motores

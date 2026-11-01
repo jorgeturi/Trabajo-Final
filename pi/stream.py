@@ -99,6 +99,11 @@ def hilo_detector():
                 detector.reiniciar()
                 estado_det["activacion"] = 0
                 continue
+            cont = estado_det.get("contacto")
+            if cont and hasattr(detector, "contacto"):       # (un detector_gestos.py viejo no lo tiene)
+                detector.contacto(cont)
+            if "frente" in estado_det and hasattr(detector, "frente"):
+                detector.frente(estado_det["frente"])
             t0 = time.perf_counter()
             paquetes = detector.procesar(lote)
             ms = round((time.perf_counter() - t0) * 1000, 1)
@@ -144,6 +149,10 @@ def procesar_mandibula(address, *args):
 def procesar_herradura(address, *args):
     cliente_espejo.send_message(address, args)
     with buffer_lock: buffer_eventos.append({"tipo": "HORSESHOE", "TP9": int(args[0]), "FP1": int(args[1]), "FP2": int(args[2]), "TP10": int(args[3])})
+
+def procesar_frente(address, *args):
+    cliente_espejo.send_message(address, args)
+    with buffer_lock: buffer_eventos.append({"tipo": "FRENTE", "valor": int(args[0])})
 
 def procesar_resto(address, *args):
     cliente_espejo.send_message(address, args)
@@ -195,6 +204,10 @@ def hilo_procesador_bci():
                 contacto_fp1 = evento['FP1']
                 contacto_fp2 = evento['FP2']
                 contacto_tp10 = evento['TP10']
+                # el detector adaptativo no detecta si los dos frontales (FP1, FP2) estan sin contacto (vincha sacada)
+                estado_det["contacto"] = {"TP9": contacto_tp9, "FP1": contacto_fp1, "FP2": contacto_fp2, "TP10": contacto_tp10}
+            elif evento["tipo"] == "FRENTE":
+                estado_det["frente"] = evento["valor"]
 
         # Flag de activación (EEG filtrado 1.5-30 Hz, ventana deslizante)
         if USA_ADAPTATIVO and not estado_det["fallo"]:
@@ -218,6 +231,9 @@ def hilo_procesador_bci():
             contacto_fp1 = 4
             contacto_fp2 = 4
             contacto_tp10 = 4
+            estado_det["contacto"] = {"TP9": 4, "FP1": 4, "FP2": 4, "TP10": 4}
+            if "frente" in estado_det:
+                estado_det["frente"] = 0
             control_motores.forzar_parada()  # Limpia la inercia acumulada
 
         # ---------------------------------------------------------
@@ -278,6 +294,7 @@ disp.map("/muse/acc", procesar_acc)
 disp.map("/muse/elements/blink", procesar_parpadeo)
 disp.map("/muse/elements/jaw_clench", procesar_mandibula)
 disp.map("/muse/elements/horseshoe", procesar_herradura)
+disp.map("/muse/elements/touching_forehead", procesar_frente)     # contacto general de la vincha (1 = toca la frente)
 disp.set_default_handler(procesar_resto)
 
 server = osc_server.BlockingOSCUDPServer(("127.0.0.1", 5000), disp)

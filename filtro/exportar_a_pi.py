@@ -45,6 +45,7 @@ class DetectorGestos:
         self.estado = 0                                              # salida mantenida: cambia con cada gesto detectado
         self._ult_det = -1e9
         self._sep = self.motor.p.paso_s + self.motor.p.mantener_s   # ventanas con deteccion mas juntas que esto = el mismo gesto
+        self._n_reinicios = 0
 
     def procesar(self, lote):
         paquetes = []
@@ -57,14 +58,26 @@ class DetectorGestos:
                 if nuevo:
                     self.n_gestos += 1
                     self.estado ^= 1                                 # 0 -> 1 con un gesto, 1 -> 0 con el siguiente
+            if d['calibrando'] or self.motor.n_reinicios != self._n_reinicios:
+                self.estado = 0                                      # al arrancar y al volver a calibrar la activacion queda en 0
+                self._n_reinicios = self.motor.n_reinicios
             paquetes.append({
                 "tipo": "DETECCION", "t": round(t, 3), "activacion": self.activacion(), "pulso": self.motor.salida(), "det": bool(d['det']),
-                "gesto_nuevo": bool(nuevo), "n_gestos": self.n_gestos, "calibrando": bool(d['calibrando']),
+                "gesto_nuevo": bool(nuevo), "n_gestos": self.n_gestos, "calibrando": bool(d['calibrando']), "previo": int(d.get('previo', 0)),
                 "via": d['via'], "freno": d['freno'],
                 "margen": {c: round(float(d['margen'][c]), 1) for c in CAN},
                 "ratios": {c: round(float(d['ratios'][c]), 2) for c in CAN},
                 "ignorado": {c: bool(d['ignorado'][c]) for c in CAN}})
         return paquetes
+
+    def frente(self, valor):
+        """/muse/elements/touching_forehead (1 = la vincha toca la frente, 0 = no): contacto general de la vincha."""
+        self.motor.set_frente(valor)
+
+    def contacto(self, vals):
+        """Horseshoe de la vincha ({'TP9': 1..4, 'FP1': .., 'FP2': .., 'TP10': ..}, 4 = sin contacto): si los DOS frontales estan sin
+        contacto durante mas de una ventana el filtro no detecta (vincha sacada). stream.py lo llama antes de cada lote."""
+        self.motor.set_contacto(vals)
 
     def activacion(self):
         return self.estado
