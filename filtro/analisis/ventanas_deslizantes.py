@@ -43,6 +43,8 @@ from scipy.ndimage import binary_dilation, label, maximum_filter1d
 from scipy.stats import kurtosis
 
 AQUI = Path(__file__).resolve().parent
+BASE_S = 2.0                       # segundos del promedio que se resta a la señal (base) para quitar la deriva lenta
+ORDEN = 8                          # orden de diseño del Butterworth pasa-banda principal (el orden total es el doble)
 RAIZ = AQUI.parent.parent          # carpeta con los datasets (Trabajo Final)
 SALIDA = AQUI / 'resultados'
 from scipy import signal  # noqa: E402
@@ -220,14 +222,14 @@ def preparar_senales(df, fs):
     """Señal filtrada, base y desplazamiento d = |señal - base| por canal. Causal: estado inicial del filtro escalado a
     la primera muestra y base = promedio de los últimos 2 s."""
     nyq = fs / 2.0
-    sos = signal.butter(8, [BANDA[0] / nyq, min(BANDA[1], 0.9 * nyq) / nyq], btype='band', output='sos')
+    sos = signal.butter(ORDEN, [BANDA[0] / nyq, min(BANDA[1], 0.9 * nyq) / nyq], btype='band', output='sos')
     sig, base = {}, {}
     for c in CAN:
         x = df[c].values.astype(float)
         y, _ = signal.sosfilt(sos, x, zi=signal.sosfilt_zi(sos) * x[0])
         s = pd.Series(y)
         sig[c] = s.values
-        base[c] = s.rolling(window=int(fs * 2), min_periods=1).mean().values
+        base[c] = s.rolling(window=int(fs * BASE_S), min_periods=1).mean().values
     desp = {c: np.abs(sig[c] - base[c]) for c in CAN}
     # canales virtuales: promedio frontal y diferencia frontal-temporal (rechazan el ruido común a los electrodos)
     fav = (sig['FP1'] + sig['FP2']) / 2.0
