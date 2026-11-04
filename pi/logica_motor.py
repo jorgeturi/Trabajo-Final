@@ -19,6 +19,8 @@ class ControladorMotores:
         # Verificación del eje Y: hasta llenar la ventana (y mientras esté al revés) los motores salen en 0
         self.ventana_y = deque(maxlen=config.ACC_VERIF_MUESTRAS)
         self.vincha_ok = False
+        self.verificando = True       # todavia no se llenó la ventana de Y: no se sabe si la vincha esta bien puesta
+        self.invertida = False        # ventana de Y llena y su media por debajo del umbral: vincha al revés
 
     def _zona_muerta(self, valor, zona, maximo):
         """Dentro de la zona -> 0. Fuera, se reescala desde 0 para que no haya salto."""
@@ -37,6 +39,8 @@ class ControladorMotores:
         self.ventana_z.clear()
         self.ventana_y.clear()
         self.vincha_ok = False
+        self.verificando = True
+        self.invertida = False
 
     def procesar_eventos(self, lote_eventos):
         for evento in lote_eventos:
@@ -51,6 +55,8 @@ class ControladorMotores:
                 self.ventana_y.append(evento["y"])
                 self.vincha_ok = (len(self.ventana_y) == self.ventana_y.maxlen and
                                   statistics.fmean(self.ventana_y) >= config.ACC_Y_UMBRAL_INVERTIDA)
+                self.verificando = len(self.ventana_y) < self.ventana_y.maxlen
+                self.invertida = not self.verificando and not self.vincha_ok
 
                 if len(self.ventana_x) > 2:
                     x_mediana = statistics.median(self.ventana_x)

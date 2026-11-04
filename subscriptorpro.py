@@ -1,6 +1,8 @@
 import zmq
 import threading
 import logging
+import time
+from collections import deque
 from flask import Flask, jsonify, render_template_string
 
 log = logging.getLogger('werkzeug')
@@ -23,11 +25,21 @@ DATOS_ACTUALES = {
     "evento_reciente": "ESPERANDO SEÑAL",
     "alpha": [0,0,0,0],
     "beta": [0,0,0,0],
+    "pico": {"estado": "--", "motivo": "", "dt_ms": 0, "trama": "", "recibido": False},
     "deteccion": {"recibido": False, "activacion": 0, "n_gestos": 0, "calibrando": True, "via": "", "freno": "",
                   "margen": {"TP9": 0, "FP1": 0, "FP2": 0, "TP10": 0},
                   "ratios": {"TP9": 0, "FP1": 0, "FP2": 0, "TP10": 0},
                   "ignorado": {"TP9": False, "FP1": False, "FP2": False, "TP10": False}}
 }
+
+# Registro de lo que pasa (lo ultimo primero en el panel): estados, gestos, ventanas descartadas y problemas de enlace
+LOG = deque(maxlen=300)
+_ult = {"estado": None, "activacion": None, "freno": None, "freno_t": 0.0, "hueco_t": 0.0, "calibrando": None, "error_t": 0.0}
+
+
+def registrar(tipo, texto):
+    LOG.append({"t": time.strftime("%H:%M:%S"), "tipo": tipo, "texto": texto})
+
 
 def lector_zmq():
     context = zmq.Context()
@@ -67,8 +79,41 @@ def lector_zmq():
             elif tipo == "DETECCION":
                 DATOS_ACTUALES["deteccion"] = {k: msg.get(k) for k in DATOS_ACTUALES["deteccion"]}
                 DATOS_ACTUALES["deteccion"]["recibido"] = True
+                ahora = time.time()
+                if msg.get("calibrando") != _ult["calibrando"]:
+                    registrar("estado", "Calibrando el filtro..." if msg.get("calibrando") else "Calibración terminada")
+                    _ult["calibrando"] = msg.get("calibrando")
                 if msg.get("gesto_nuevo"):
                     DATOS_ACTUALES["evento_reciente"] = "GESTO DETECTADO"
+                    registrar("gesto", f"GESTO #{msg.get('n_gestos')} detectado por: {msg.get('via') or '-'}  ->  activación {msg.get('activacion')}")
+                elif msg.get("freno"):
+                    # una ventana que parecia gesto y se descarto: se anota el motivo (sin repetirlo mientras sea el mismo)
+                    if msg.get("freno") != _ult["freno"] or ahora - _ult["freno_t"] > 2.0:
+                        r = msg.get("ratios") or {}
+                        registrar("descarte", f"Ventana descartada: {msg.get('freno')}   (pico/margen " + " ".join(f"{c} {r.get(c, 0):.1f}" for c in ("TP9", "FP1", "FP2", "TP10")) + ")")
+                        _ult["freno"] = msg.get("freno")
+                    _ult["freno_t"] = ahora
+
+            elif tipo == "TRAMA_PICO":
+                # lo que la Pi manda a la Pico por UART
+                ahora = time.time()
+                est, act = msg.get("estado"), msg.get("activacion")
+                DATOS_ACTUALES["pico"] = {"estado": est, "motivo": msg.get("motivo", ""), "dt_ms": msg.get("dt_ms", 0),
+                                          "trama": msg.get("trama", ""), "recibido": True}
+                if est != _ult["estado"]:
+                    registrar("emergencia" if est == "EMERGENCIA" else "estado",
+                              f"Estado: {_ult['estado'] or '-'}  ->  {est}" + (f"   motivo: {msg.get('motivo')}" if msg.get("motivo") else ""))
+                    _ult["estado"] = est
+                if act != _ult["activacion"]:
+                    if _ult["activacion"] is not None:
+                        registrar("estado", f"Activación hacia la Pico: {_ult['activacion']}  ->  {act}")
+                    _ult["activacion"] = act
+                if not msg.get("ok", True) and ahora - _ult["error_t"] > 1.0:
+                    registrar("error", f"No se pudo escribir la trama por UART (errores: {msg.get('errores')})")
+                    _ult["error_t"] = ahora
+                if msg.get("dt_ms", 0) > 300 and ahora - _ult["hueco_t"] > 1.0:
+                    registrar("error", f"Hueco de {msg.get('dt_ms')} ms entre tramas hacia la Pico (la Pico corta a los 500 ms)")
+                    _ult["hueco_t"] = ahora
 
             elif tipo == "OTRO":
                 address = msg.get("address", "")
@@ -91,7 +136,9 @@ hilo.start()
 
 @app.route('/datos')
 def obtener_datos():
-    return jsonify(DATOS_ACTUALES)
+    datos = dict(DATOS_ACTUALES)
+    datos["log"] = list(LOG)[-120:][::-1]      # lo mas nuevo arriba
+    return jsonify(datos)
 
 @app.route('/')
 def index():
@@ -289,6 +336,14 @@ def index():
                                 <span class="data-label">Última ventana</span>
                                 <span class="data-value" id="det_motivo">--</span>
                             </div>
+                            <div class="label-row">
+                                <span class="data-label">Estado hacia la Pico</span>
+                                <span class="data-value" id="pico_estado">--</span>
+                            </div>
+                            <div class="label-row">
+                                <span class="data-label">Última trama</span>
+                                <span class="data-value" id="pico_trama" style="font-size: 0.8rem;">--</span>
+                            </div>
                             <div class="data-label mt-3 mb-1">Pico / margen (≥ 1 supera)</div>
                             <div class="imu-grid mb-0">
                                 <div class="imu-item">TP9 <span id="det_r_tp9">0</span><br><small id="det_m_tp9"></small></div>
@@ -311,6 +366,15 @@ def index():
                                 <span class="data-value" id="beta">[0, 0, 0, 0]</span>
                             </div>
                         </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="row g-4 mt-1">
+                <div class="col-12">
+                    <div class="card">
+                        <div class="card-header">Registro (lo más nuevo arriba)</div>
+                        <div class="card-body" id="log" style="max-height: 320px; overflow-y: auto; font-family: 'JetBrains Mono', monospace; font-size: 0.85rem;">Esperando eventos...</div>
                     </div>
                 </div>
             </div>
@@ -357,6 +421,24 @@ def index():
                             document.getElementById('det_r_' + k).innerText = (det.ratios[c] || 0).toFixed(1);
                             document.getElementById('det_m_' + k).innerText = det.ignorado[c] ? 'ignorado' : ('margen ' + Math.round(det.margen[c]) + ' µV');
                         });
+
+                        const pico = data.pico;
+                        const colorEstado = {MARCHA: '#00FF00', REPOSO: '#00E5FF', CALIBRACION: '#FFFF00', INICIO: '#FFFFFF', EMERGENCIA: '#FF0000'};
+                        document.getElementById('pico_estado').innerHTML = pico.recibido
+                            ? "<span style='color:" + (colorEstado[pico.estado] || '#FFFFFF') + "'>" + pico.estado + "</span>"
+                              + (pico.motivo ? " (" + pico.motivo + ")" : "") + "  " + pico.dt_ms + " ms"
+                            : "<span class='status-err'>SIN TRAMAS (¿stream.py viejo?)</span>";
+                        document.getElementById('pico_trama').innerText = pico.trama || '--';
+
+                        const colorLog = {gesto: '#00FF00', descarte: '#9a9a9a', estado: '#FFFF00', emergencia: '#FF4444', error: '#FF8800'};
+                        const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+                        const claveLog = data.log.length + '|' + (data.log.length ? data.log[0].t + data.log[0].texto : '');
+                        if (claveLog !== window._claveLog) {
+                            window._claveLog = claveLog;
+                            document.getElementById('log').innerHTML = data.log.length
+                                ? data.log.map(e => "<div style='color:" + (colorLog[e.tipo] || '#FFFFFF') + "'>" + e.t + "  " + esc(e.texto) + "</div>").join('')
+                                : 'Esperando eventos...';
+                        }
 
                         document.getElementById('alpha').innerText = JSON.stringify(data.alpha);
                         document.getElementById('beta').innerText = JSON.stringify(data.beta);

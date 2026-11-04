@@ -1,6 +1,7 @@
 """
-Escucha por ZMQ lo que publica la Raspberry y muestra los tipos de paquete que llegan y los paquetes DETECCION
-(margen y pico/margen por canal). Sirve para comprobar si la Pi esta publicando la deteccion, sin pasar por el dashboard.
+Escucha por ZMQ lo que publica la Raspberry y muestra: los tipos de paquete que llegan, los paquetes DETECCION (margen y pico/margen
+por canal) y las tramas que la Pi manda a la Pico (TRAMA_PICO: se imprime cuando cambia el estado o la activacion, y el motivo cuando
+el estado es EMERGENCIA). Sirve para comprobar que la Pi publica la deteccion y que manda a la Pico lo que se espera, sin el dashboard.
 
 Uso: python filtro/ver_deteccion.py [IP_DE_LA_PI]     (por defecto 192.168.1.50)
 """
@@ -16,6 +17,7 @@ sock.setsockopt_string(zmq.SUBSCRIBE, "")
 sock.setsockopt(zmq.RCVTIMEO, 500)
 print(f"Escuchando {ip}:5555 (Ctrl+C para salir)")
 cuenta, t0, ultimo = {}, time.time(), 0.0
+ultima_trama = [None]
 while True:
     try:
         m = sock.recv_json()
@@ -25,6 +27,13 @@ while True:
         break
     if m:
         cuenta[m.get('tipo')] = cuenta.get(m.get('tipo'), 0) + 1
+        if m.get('tipo') == 'TRAMA_PICO':
+            # lo que la Pi manda a la Pico por UART: se muestra cuando cambia el estado o la activacion, o si hay un hueco o un error
+            clave = (m['estado'], m['activacion'])
+            if clave != ultima_trama[0] or m['dt_ms'] > 150 or not m['ok']:
+                ultima_trama[0] = clave
+                print(f"TRAMA_PICO  {m['trama']}  dt={m['dt_ms']} ms  estado={m['estado']}" + (f" ({m['motivo']})" if m.get('motivo') else "")
+                      + ("  <-- NO SE PUDO ESCRIBIR" if not m['ok'] else "") + (f"  errores de escritura={m['errores']}" if m['errores'] else ""))
         if m.get('tipo') == 'DETECCION' and time.time() - ultimo > 0.5:
             ultimo = time.time()
             r, g = m['ratios'], m['margen']

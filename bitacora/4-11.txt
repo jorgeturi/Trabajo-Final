@@ -1,0 +1,18 @@
+2026-11-04 — Alimentación dudosa de la Raspberry Pi y verificación de la falla segura
+Contexto. Durante las pruebas, la Raspberry Pi quedó alimentada de forma dudosa, con un cable medio flojo.
+
+Lo que se observó en el debug:
+
+Huecos de hasta 364 ms entre tramas enviadas de la Pi hacia la Pico (la Pico corta el enlace a los 500 ms sin tramas).
+Ráfagas de FLUJO CORTADO con ciclos EMERGENCIA ↔ CALIBRACION, alrededor de las 17:30 y las 17:34.
+El LED que parpadea con cada trama recibida se quedó colgado.
+La Pico mostró sin enlace.
+Resultado. La Pico cortó y no activó los motores: la falla segura funcionó como estaba previsto. Ante la pérdida del enlace, el sistema se fue al estado seguro en vez de dejar los actuadores en un estado indefinido.
+
+Recuperación. Al normalizar la alimentación (17:35) volvió a detectarse el gesto #2, se pasó de REPOSO a MARCHA y la activación cambió de 0 a 1, o sea que todo retomó su funcionamiento normal sin intervención adicional.
+
+Acciones sugeridas:
+
+Verificar en la Pi si hubo subtensión o throttling con vcgencmd get_throttled (un valor distinto de 0x0 indica que hubo problemas de alimentación).
+Usar una fuente de 5 V con margen de corriente y un cable corto y firme para la Pi.
+Comentario de color. En el momento pensé que había dejado de andar todo y ya me veía rearmando medio proyecto... pero no: el sistema estaba haciendo exactamente lo que tenía que hacer. Fue la prueba de falla segura más honesta que podía pedir, y encima sin planearla, jaja.

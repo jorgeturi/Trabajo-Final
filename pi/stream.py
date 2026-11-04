@@ -30,7 +30,7 @@ buffer_eeg = []
 buffer_eventos = []
 buffer_lock = threading.Lock()
 
-factor_submuestreo_zmq = 1 
+# Submuestreo del EEG hacia el detector: se pasa 1 de cada config.SUBMUESTREO_DETECTOR muestras (220 Hz -> 110 Hz)
 contador_submuestreo = 0
 
 # Inicializamos el puerto y la lógica de motores
@@ -40,14 +40,9 @@ control_motores = ControladorMotores()
 # ==========================================
 # 2. CONFIGURACION DSP 
 # ==========================================
-fs = 220.0 
+fs = 220.0                                    # tasa de EEG de la vincha
+fs_det = fs / config.SUBMUESTREO_DETECTOR     # tasa con la que trabaja el detector (110 Hz)
 nyq = 0.5 * fs
-b_eeg, a_eeg = signal.butter(4, [8.0 / nyq, 30.0 / nyq], btype='band')
-
-estado_filtro = {
-    "TP9": signal.lfilter_zi(b_eeg, a_eeg), "FP1": signal.lfilter_zi(b_eeg, a_eeg),
-    "FP2": signal.lfilter_zi(b_eeg, a_eeg), "TP10": signal.lfilter_zi(b_eeg, a_eeg)
-}
 
 # --- Detección por umbral (flag de activación que se envía a la Pico) ---
 sos_det = signal.butter(4, [config.BANDA_DETECTOR[0] / nyq, config.BANDA_DETECTOR[1] / nyq],
@@ -80,12 +75,12 @@ def reiniciar_activacion():
 # --- Detector adaptativo (detector_gestos.py) en su propio hilo: no frena el bucle de motores ni la UART ---
 USA_ADAPTATIVO = (config.DETECTOR == "adaptativo")
 cola_det = queue.Queue(maxsize=400)          # lotes EEG pendientes (~20 s); si se llena se descarta el lote nuevo
-estado_det = {"activacion": 0, "limpio": True, "fallo": False}
+estado_det = {"activacion": 0, "limpio": True, "fallo": False, "calibrando": True}
 
 def hilo_detector():
     try:
         from detector_gestos import DetectorGestos
-        detector = DetectorGestos(fs)
+        detector = DetectorGestos(fs_det)
     except Exception:
         traceback.print_exc()
         print("[ERROR] No arranca el detector adaptativo (falta detector_gestos.py o pandas?). Se usa el detector simple de umbral fijo.", flush=True)
@@ -95,9 +90,15 @@ def hilo_detector():
     while True:
         lote = cola_det.get()
         try:
+            if isinstance(lote, str):        # "APAGAR": entro en emergencia, la activacion mantenida vuelve a 0 (hace falta un gesto nuevo)
+                if hasattr(detector, "estado"):
+                    detector.estado = 0
+                estado_det["activacion"] = 0
+                continue
             if lote is None:                 # vincha desconectada: se vuelve a calibrar al reconectar
                 detector.reiniciar()
                 estado_det["activacion"] = 0
+                estado_det["calibrando"] = True
                 continue
             cont = estado_det.get("contacto")
             if cont and hasattr(detector, "contacto"):       # (un detector_gestos.py viejo no lo tiene)
@@ -107,14 +108,66 @@ def hilo_detector():
             t0 = time.perf_counter()
             paquetes = detector.procesar(lote)
             ms = round((time.perf_counter() - t0) * 1000, 1)
+            publicar_eeg_detector(lote, detector)
             for paquete in paquetes:
                 paquete["ms"] = ms                   # cuanto tardo decidir (si se acerca a 250 ms no llega en tiempo real)
                 paquete["cola"] = cola_det.qsize()   # lotes esperando: si crece, el detector se atrasa
                 estado_det["activacion"] = paquete["activacion"]
+                estado_det["calibrando"] = paquete["calibrando"]
                 with zmq_lock:
                     zmq_socket.send_json(paquete)
         except Exception:
             traceback.print_exc()            # el hilo sigue vivo aunque falle una ventana
+
+def publicar_eeg_detector(lote, detector):
+    """Publica por ZMQ el EEG que analiza el detector: crudo (submuestreado a 110 Hz) y filtrado por SU pasabanda de 8-30 Hz
+    (no hay un filtro aparte para visualizar). Las ultimas len(lote) muestras de flujo.sig son las de este lote."""
+    n = len(lote)
+    if n == 0:
+        return
+    sig = detector.motor.flujo.sig
+    if sig.shape[1] < n:
+        return
+    filt = sig[:, -n:]
+    with zmq_lock:
+        for i in range(n):
+            zmq_socket.send_json({
+                "tipo": "EEG",
+                "TP9_raw": float(lote[i][0]),  "TP9_filtrado": float(filt[0, i]),
+                "FP1_raw": float(lote[i][1]),  "FP1_filtrado": float(filt[1, i]),
+                "FP2_raw": float(lote[i][2]),  "FP2_filtrado": float(filt[2, i]),
+                "TP10_raw": float(lote[i][3]), "TP10_filtrado": float(filt[3, i])})
+
+def calcular_estado(hubo_datos, cortado, invertida, sin_contacto_s, verificando, calibrando, activacion):
+    """Estado que se informa a la Pico (texto). De mayor a menor prioridad:
+    INICIO (todavia no llegaron datos) > EMERGENCIA (se cortó el flujo, vincha al revés o falla de 2 FP o de 2 TP por mas de 5 s)
+    > CALIBRACION (verificando el eje Y o calibrando el filtro) > MARCHA (activacion en 1) > REPOSO."""
+    if not hubo_datos:
+        return "INICIO"
+    if cortado or invertida or sin_contacto_s >= config.SIN_CONTACTO_EMERGENCIA_S:
+        return "EMERGENCIA"
+    if verificando or calibrando:
+        return "CALIBRACION"
+    return "MARCHA" if activacion else "REPOSO"
+
+def motivo_emergencia(cortado, invertida, sin_contacto_s):
+    """Por qué el estado es EMERGENCIA (solo para publicar y diagnosticar)."""
+    if cortado:
+        return "FLUJO CORTADO"
+    if invertida:
+        return "VINCHA AL REVES"
+    if sin_contacto_s >= config.SIN_CONTACTO_EMERGENCIA_S:
+        return "FALLA DE CONTACTO (2 FP o 2 TP)"
+    return ""
+
+def apagar_deteccion():
+    """Al entrar en EMERGENCIA la activacion mantenida se apaga: al salir de la emergencia no vuelve sola, hace falta un gesto nuevo."""
+    estado_det["activacion"] = 0
+    if USA_ADAPTATIVO and not estado_det["fallo"]:
+        try:
+            cola_det.put_nowait("APAGAR")
+        except queue.Full:
+            pass
 
 def reiniciar_deteccion():
     """Pone a cero la activación y reinicia el detector (una sola vez por desconexión)."""
@@ -122,6 +175,7 @@ def reiniciar_deteccion():
     if USA_ADAPTATIVO and not estado_det["fallo"] and not estado_det["limpio"]:
         estado_det["limpio"] = True
         estado_det["activacion"] = 0
+        estado_det["calibrando"] = True
         try:
             cola_det.put_nowait(None)
         except queue.Full:
@@ -162,7 +216,7 @@ def procesar_resto(address, *args):
 # 4. HILO PROCESADOR 
 # ==========================================
 def hilo_procesador_bci():
-    global estado_filtro, contador_submuestreo
+    global contador_submuestreo
     
     contacto_tp9 = 4
     contacto_fp1 = 4
@@ -172,6 +226,11 @@ def hilo_procesador_bci():
     # --- WATCHDOG DE LA VINCHA ---
     tiempo_ultimo_dato = time.time()
     activacion = 0
+    ultimo_envio = time.time()    # para medir cada cuánto se manda la trama por UART (debería ser ~50 ms)
+    dt_envio_ms = 0
+    estado_anterior = "INICIO"
+    hubo_datos = False        # llegó algún dato de la vincha desde que arrancó (para distinguir INICIO de un corte)
+    sin_cont_desde = None     # desde cuándo fallan los dos FP o los dos TP (contacto > config.CONTACTO_FALLA)
     TIMEOUT_VINCHA = 0.5  # Segundos sin recibir datos antes de cortar motores
     
     while True:
@@ -186,6 +245,7 @@ def hilo_procesador_bci():
         # Si llegaron datos nuevos (EEG o Eventos), actualizamos el reloj del Watchdog
         if lote_eeg or lote_eventos:
             tiempo_ultimo_dato = time.time()
+            hubo_datos = True
         
         # 1. Calculamos y pedimos el estado completo de los motores
         control_motores.procesar_eventos(lote_eventos)
@@ -213,10 +273,16 @@ def hilo_procesador_bci():
         if USA_ADAPTATIVO and not estado_det["fallo"]:
             if lote_eeg:
                 estado_det["limpio"] = False
-                try:
-                    cola_det.put_nowait(list(lote_eeg))
-                except queue.Full:
-                    pass
+                lote_det = []
+                for muestra in lote_eeg:              # 1 de cada SUBMUESTREO_DETECTOR muestras, contando entre lotes
+                    if contador_submuestreo == 0:
+                        lote_det.append(muestra)
+                    contador_submuestreo = (contador_submuestreo + 1) % config.SUBMUESTREO_DETECTOR
+                if lote_det:
+                    try:
+                        cola_det.put_nowait(lote_det)
+                    except queue.Full:
+                        pass
             activacion = estado_det["activacion"]
         elif lote_eeg:
             activacion = actualizar_activacion(list(zip(*lote_eeg)))
@@ -236,13 +302,42 @@ def hilo_procesador_bci():
                 estado_det["frente"] = 0
             control_motores.forzar_parada()  # Limpia la inercia acumulada
 
+        # --- ESTADO (texto) PARA LA PICO ---
+        cortado = (time.time() - tiempo_ultimo_dato) > TIMEOUT_VINCHA
+        falla = config.CONTACTO_FALLA
+        falla_par = (contacto_fp1 > falla and contacto_fp2 > falla) or (contacto_tp9 > falla and contacto_tp10 > falla)
+        if falla_par and hubo_datos and not cortado:
+            if sin_cont_desde is None:
+                sin_cont_desde = time.time()
+        else:
+            sin_cont_desde = None
+        sin_contacto_s = (time.time() - sin_cont_desde) if sin_cont_desde is not None else 0.0
+        estado = calcular_estado(hubo_datos, cortado, control_motores.invertida, sin_contacto_s,
+                                 control_motores.verificando, estado_det["calibrando"] and USA_ADAPTATIVO and not estado_det["fallo"],
+                                 activacion)
+        if estado == "EMERGENCIA" and estado_anterior != "EMERGENCIA":
+            apagar_deteccion()
+        estado_anterior = estado
+        if estado == "EMERGENCIA":             # en emergencia los motores quedan quietos y sin activación hacia la Pico
+            pwm1 = 0
+            pwm2 = 0
+            activacion = 0
+
         # ---------------------------------------------------------
         # ENVÍO 1: UART HACIA LA PICO (Físico)
         # ---------------------------------------------------------
-        pico_serial.enviar_estado(
+        ahora_envio = time.time()
+        dt_envio_ms = int((ahora_envio - ultimo_envio) * 1000)
+        ultimo_envio = ahora_envio
+        trama_enviada, trama_ok = pico_serial.enviar_estado(
             contacto_tp9, contacto_fp1, contacto_fp2, contacto_tp10, 
-            pwm1, pwm2, activacion
+            pwm1, pwm2, activacion, estado
         )
+        # Lo que realmente se manda a la Pico, publicado por ZMQ para compararlo con lo que ve la Pico (ver filtro/ver_deteccion.py)
+        with zmq_lock:
+            zmq_socket.send_json({"tipo": "TRAMA_PICO", "trama": trama_enviada, "ok": trama_ok, "errores": pico_serial.errores,
+                                  "dt_ms": dt_envio_ms, "estado": estado, "activacion": activacion, "pwm1": pwm1, "pwm2": pwm2,
+                                  "motivo": motivo_emergencia(cortado, control_motores.invertida, sin_contacto_s) if estado == "EMERGENCIA" else ""})
         
         # ---------------------------------------------------------
         # ENVÍO 2: ZMQ DEBUG MOTORES (Red)
@@ -257,32 +352,20 @@ def hilo_procesador_bci():
                 "x_filt": estado_mot["x_filt"],
                 "z_filt": estado_mot["z_filt"],
                 "activacion": activacion,
+                "estado": estado,
+                "dt_uart_ms": dt_envio_ms,      # tiempo desde la trama anterior hacia la Pico: si pasa de ~300 ms la Pico puede mostrar SIN ENLACE
                 "zona_x": config.ZONA_MUERTA_X,
                 "zona_z": config.ZONA_MUERTA_Z
             }
             with zmq_lock:
                 zmq_socket.send_json(paquete_debug_motor)
                 
-        # 3. Filtrar y enviar EEG
-        if lote_eeg:
-            canales_raw = list(zip(*lote_eeg)) 
-            tp9_f, estado_filtro["TP9"] = signal.lfilter(b_eeg, a_eeg, canales_raw[0], zi=estado_filtro["TP9"])
-            fp1_f, estado_filtro["FP1"] = signal.lfilter(b_eeg, a_eeg, canales_raw[1], zi=estado_filtro["FP1"])
-            fp2_f, estado_filtro["FP2"] = signal.lfilter(b_eeg, a_eeg, canales_raw[2], zi=estado_filtro["FP2"])
-            tp10_f, estado_filtro["TP10"] = signal.lfilter(b_eeg, a_eeg, canales_raw[3], zi=estado_filtro["TP10"])
-            
-            for i in range(len(lote_eeg)):
-                contador_submuestreo += 1
-                if contador_submuestreo >= factor_submuestreo_zmq:
-                    paquete_eeg = {
-                        "tipo": "EEG",
-                        "TP9_raw": float(canales_raw[0][i]),   "TP9_filtrado": float(tp9_f[i]),
-                        "FP1_raw": float(canales_raw[1][i]),   "FP1_filtrado": float(fp1_f[i]),
-                        "FP2_raw": float(canales_raw[2][i]),   "FP2_filtrado": float(fp2_f[i]),
-                        "TP10_raw": float(canales_raw[3][i]),  "TP10_filtrado": float(tp10_f[i])
-                    }
-                    with zmq_lock: zmq_socket.send_json(paquete_eeg)
-                    contador_submuestreo = 0
+        # 3. EEG crudo sin detector adaptativo (si el detector no arranca, se publica solo el crudo)
+        if lote_eeg and not (USA_ADAPTATIVO and not estado_det["fallo"]):
+            with zmq_lock:
+                for m in lote_eeg:
+                    zmq_socket.send_json({"tipo": "EEG", "TP9_raw": float(m[0]), "FP1_raw": float(m[1]),
+                                          "FP2_raw": float(m[2]), "TP10_raw": float(m[3])})
 
 
 # ==========================================

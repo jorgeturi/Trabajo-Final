@@ -20,3 +20,14 @@ ZONA_MUERTA_Z = 150.0          # motor 2 (eje Z)
 # Media de Y por debajo del umbral = vincha al revés -> motores en 0
 ACC_VERIF_MUESTRAS = 26        # muestras ACC que se promedian (~0.5 s)
 ACC_Y_UMBRAL_INVERTIDA = 0.0
+
+# --- Submuestreo del EEG hacia el detector adaptativo ---
+# El detector procesa 1 de cada N muestras: 220 Hz / 2 = 110 Hz (a 220 Hz no llegaba a procesar los lotes a tiempo).
+SUBMUESTREO_DETECTOR = 2
+
+# --- Estado que se informa a la Pico (INICIO, CALIBRACION, REPOSO, MARCHA, EMERGENCIA) ---
+# Un electrodo tiene falla cuando su contacto (horseshoe, 1 a 4) es mayor que CONTACTO_FALLA.
+# Falla de los DOS FP (FP1 y FP2) o de los DOS TP (TP9 y TP10) durante al menos este tiempo = EMERGENCIA.
+# Un gesto hace caer el contacto un instante, por eso no se declara emergencia antes.
+CONTACTO_FALLA = 2
+SIN_CONTACTO_EMERGENCIA_S = 5.0
