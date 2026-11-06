@@ -9,8 +9,14 @@ oled = ssd1306.SSD1306_I2C(128, 64, i2c)
 # El UART ya recibe por interrupcion: el hardware llena un buffer circular y el programa lo lee cuando puede. Un buffer mas grande
 # aguanta que el bucle se demore (dibujar la pantalla tarda ~30 ms) sin perder bytes.
 uart_pico = UART(1, baudrate=115200, tx=Pin(4), rx=Pin(5), rxbuf=1024)
-PIN_ACTIVACION = 20              # salida que sigue a la activacion de la Pi: 1 = activada, 0 = desactivada (GP20 = pin fisico 26)
-pin_activacion = Pin(PIN_ACTIVACION, Pin.OUT, value=0)
+# --- FRENOS ELECTROMAGNETICOS (GP20 = pin fisico 26) ---
+# 1 = frenos aplicados, 0 = sueltos. Arranca en 1: la plataforma queda frenada hasta que la Pi active la marcha.
+# Se sueltan cuando llega activacion = 1 (y estado de marcha); se vuelven a aplicar recien cuando la rampa llevo avance y giro a 0.
+PIN_FRENO = 20
+FRENO_APLICADO = 1
+FRENO_SUELTO = 0
+pin_freno = Pin(PIN_FRENO, Pin.OUT, value=FRENO_APLICADO)
+ESTADOS_MARCHA = ("MARCHA", "MARCHA LIMITADA", "---")   # "---": la Pi no manda estado, alcanza la activacion
 
 # --- CONFIGURACION MOTORES: MOVIMIENTO DIFERENCIAL (puente H, dos PWM por motor) ---
 # Cada motor usa dos pines: IN1 gira hacia adelante, IN2 hacia atras (nunca los dos a la vez).
@@ -20,7 +26,7 @@ PIN_DER_ADELANTE, PIN_DER_ATRAS = 17, 19
 INVERTIR_IZQ = False             # True si al avanzar el motor izquierdo gira al reves
 INVERTIR_DER = False
 FREQ_PWM = 21000
-PWM_MAX = 11000                  # duty maximo (0-65535) cuando la Pi manda 100 o -100. Subirlo de a poco en las pruebas
+PWM_MAX = 16000                  # duty maximo (0-65535) cuando la Pi manda 100 o -100. Subirlo de a poco en las pruebas
 TIEMPO_MUERTO_MS = 20            # al invertir el sentido de un motor, los dos pines quedan en 0 este tiempo antes de usar el otro
 TIEMPO_RAMPA_S = 1.0             # segundos para ir de 0 a PWM_MAX (invertir el sentido a fondo tarda el doble)
 
@@ -245,9 +251,6 @@ while True:
         else:
             avance_objetivo = 0.0
             giro_objetivo = 0.0
-        # La salida solo se enciende con activacion Y estado MARCHA (si la Pi no manda estado, "---", alcanza la activacion):
-        # cualquier otro estado (EMERGENCIA, CALIBRACION, REPOSO...) la deja en 0 aunque el campo de activacion viniera en 1.
-        pin_activacion.value(1 if (activacion and estado_pi in ("MARCHA", "---")) else 0)
 
         # Lógica de detección de error
         if tp9 > 2 and tp10 > 2: error_actual = "ambos_oidos"
@@ -270,7 +273,6 @@ while True:
         avance_actual = 0.0
         giro_actual = 0.0
         activacion = 0
-        pin_activacion.value(0)
         estado_pi = "SIN ENLACE"
         error_actual = "DESC"
 
@@ -284,6 +286,13 @@ while True:
     izq_pct, der_pct = mezclar(avance_actual, giro_actual)
     izq_actual = a_duty(izq_pct * COMPENSACION_IZQ)
     der_actual = a_duty(der_pct * COMPENSACION_DER)
+
+    # Frenos: se sueltan con activacion y estado de marcha; se aplican cuando no hay activacion y la rampa ya llego a 0
+    # (en EMERGENCIA o sin tramas los valores actuales ya se pusieron en 0, asi que se aplican enseguida)
+    if activacion and estado_pi in ESTADOS_MARCHA:
+        pin_freno.value(FRENO_SUELTO)
+    elif avance_actual == 0 and giro_actual == 0:
+        pin_freno.value(FRENO_APLICADO)
 
     # Aplicamos a los pines fisicos
     escribir_motor('izq', izq_av, izq_at, izq_actual, INVERTIR_IZQ, ahora_ms)

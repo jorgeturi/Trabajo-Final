@@ -31,3 +31,9 @@ SUBMUESTREO_DETECTOR = 2
 # Un gesto hace caer el contacto un instante, por eso no se declara emergencia antes.
 CONTACTO_FALLA = 2
 SIN_CONTACTO_EMERGENCIA_S = 5.0
+
+# --- Espejo UDP (copia sin procesar de los mensajes OSC hacia la PC de monitoreo) ---
+# False = no se reenvia nada (menos trabajo en el hilo del servidor OSC cuando la PC no esta).
+ESPEJO_UDP = True
+ESPEJO_IP = "192.168.1.55"
+ESPEJO_PUERTO = 5000

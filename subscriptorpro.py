@@ -112,7 +112,10 @@ def lector_zmq():
                     registrar("error", f"No se pudo escribir la trama por UART (errores: {msg.get('errores')})")
                     _ult["error_t"] = ahora
                 if msg.get("dt_ms", 0) > 300 and ahora - _ult["hueco_t"] > 1.0:
-                    registrar("error", f"Hueco de {msg.get('dt_ms')} ms entre tramas hacia la Pico (la Pico corta a los 500 ms)")
+                    registrar("error", f"Hueco de {msg.get('dt_ms')} ms entre tramas hacia la Pico (la Pico corta a los 500 ms)"
+                              + (f"  [envio atrasado {msg.get('retraso_ms')} ms, escritura {msg.get('escritura_ms')} ms, lazo: sleep {msg.get('sleep_ms')} ms"
+                                 f" + trabajo {msg.get('trabajo_ms')} ms, cola detector {msg.get('cola')}, tramas viejas {msg.get('viejas')}]"
+                                 if "retraso_ms" in msg else ""))
                     _ult["hueco_t"] = ahora
 
             elif tipo == "OTRO":

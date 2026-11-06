@@ -6,11 +6,40 @@ from pyqtgraph.Qt import QtCore, QtWidgets
 # ==========================================
 # 1. CONFIGURACIÓN DE RED (ZMQ)
 # ==========================================
+class SockLotes:
+    """Envuelve el socket SUB: los mensajes por lote de stream.py (EEG_LOTE a 220 Hz y EEG_DET a 110 Hz) se entregan muestra
+    por muestra con el formato de antes ({"tipo": "EEG", "TP9_raw": ...} y {"tipo": "EEG_DET", "TP9_raw": ..., "TP9_filtrado": ...}),
+    asi el resto del programa no cambia."""
+    CAN = ("TP9", "FP1", "FP2", "TP10")
+
+    def __init__(self, sock):
+        from collections import deque
+        self._sock, self._pend = sock, deque()
+
+    def __getattr__(self, nombre):
+        return getattr(self._sock, nombre)
+
+    def recv_json(self, *a, **k):
+        while not self._pend:
+            m = self._sock.recv_json(*a, **k)
+            t = m.get("tipo")
+            if t == "EEG_LOTE":
+                for i in range(len(m["TP9"])):
+                    self._pend.append({"tipo": "EEG", **{f"{c}_raw": m[c][i] for c in self.CAN}})
+            elif t == "EEG_DET":
+                for i in range(len(m["TP9_raw"])):
+                    self._pend.append({"tipo": "EEG_DET", **{f"{c}_{s}": m[f"{c}_{s}"][i] for c in self.CAN for s in ("raw", "filtrado")}})
+            else:
+                return m
+        return self._pend.popleft()
+
+
 IP_RASPBERRY = "192.168.1.50"
 context = zmq.Context()
 sock = context.socket(zmq.SUB)
 sock.connect(f"tcp://{IP_RASPBERRY}:5555")
 sock.setsockopt_string(zmq.SUBSCRIBE, "")
+sock = SockLotes(sock)
 
 # ==========================================
 # 2. CONFIGURACIÓN DE LA INTERFAZ (PyQtGraph)

@@ -8,7 +8,7 @@ from pythonosc import dispatcher, osc_server
 # ==========================================
 # CONFIGURACION DEL EXPERIMENTO
 # ==========================================
-nombre_movimiento = "dos parpadeos lara2 23-10"
+nombre_movimiento = "dos gestos yo 6-11"
 frecuencia_teorica = 220.0
 
 # Variables globales compartidas
@@ -16,6 +16,10 @@ horseshoe_status = [4.0, 4.0, 4.0, 4.0]
 nombres_canales = ['TP9', 'FP1', 'FP2', 'TP10']
 paquetes_eeg_recibidos = 0
 estado_trigger_global = 0
+frente_status = -1                 # /muse/elements/touching_forehead (1 = toca la frente, 0 = no, -1 = todavia no llego)
+acc_status = [0.0, 0.0, 0.0]       # ultimo acelerometro recibido (x, y, z)
+blink_pendiente = 0                # eventos del SDK: quedan en 1 en la primera muestra EEG que llega despues del evento
+jaw_pendiente = 0
 
 # Buffer en RAM para almacenar los datos antes de escribirlos al disco
 buffer_datos = []
@@ -23,19 +27,24 @@ buffer_lock = threading.Lock()
 
 # Configuración del archivo CSV
 nombre_archivo = f"dataset_{nombre_movimiento.replace(' ', '_')}_{int(time.time())}.csv"
-cabeceras = ['Timestamp', 'Trigger', 'Sensores_OK'] + nombres_canales
+# Las columnas nuevas van al final: los scripts que leen por nombre (gestos_patron.py) siguen funcionando igual.
+cabeceras = (['Timestamp', 'Trigger', 'Sensores_OK'] + nombres_canales
+             + ['HS_' + c for c in nombres_canales] + ['Frente', 'ACC_X', 'ACC_Y', 'ACC_Z', 'Blink', 'Jaw'])
 
 # ==========================================
 # HANDLERS OSC (Hilos de recepcion de red)
 # ==========================================
 def eeg_handler(address, *args):
-    global paquetes_eeg_recibidos
+    global paquetes_eeg_recibidos, blink_pendiente, jaw_pendiente
     if len(args) >= 4:
         # Evaluacion ultra rapida de sensores
         sensores_ok = 1 if all(h <= 2.0 for h in horseshoe_status) else 0
         
         # Almacenamos en RAM instantaneamente (Sin bloqueos de disco ni de teclado)
-        fila = [time.time(), estado_trigger_global, sensores_ok] + list(args[:4])
+        fila = ([time.time(), estado_trigger_global, sensores_ok] + list(args[:4])
+                + list(horseshoe_status) + [frente_status] + list(acc_status) + [blink_pendiente, jaw_pendiente])
+        blink_pendiente = 0
+        jaw_pendiente = 0
         
         with buffer_lock:
             buffer_datos.append(fila)
@@ -46,10 +55,34 @@ def horseshoe_handler(address, *args):
     if len(args) >= 4:
         horseshoe_status = list(args[:4])
 
+def frente_handler(address, *args):
+    global frente_status
+    if args:
+        frente_status = int(args[0])
+
+def acc_handler(address, *args):
+    global acc_status
+    if len(args) >= 3:
+        acc_status = [float(a) for a in args[:3]]
+
+def blink_handler(address, *args):
+    global blink_pendiente
+    if args and int(args[0]):
+        blink_pendiente = 1
+
+def jaw_handler(address, *args):
+    global jaw_pendiente
+    if args and int(args[0]):
+        jaw_pendiente = 1
+
 def iniciar_osc():
     disp = dispatcher.Dispatcher()
     disp.map("/muse/eeg", eeg_handler)
     disp.map("/muse/elements/horseshoe", horseshoe_handler)
+    disp.map("/muse/elements/touching_forehead", frente_handler)
+    disp.map("/muse/acc", acc_handler)
+    disp.map("/muse/elements/blink", blink_handler)
+    disp.map("/muse/elements/jaw_clench", jaw_handler)
     
     server = osc_server.ThreadingOSCUDPServer(("0.0.0.0", 5000), disp)
     server.serve_forever()

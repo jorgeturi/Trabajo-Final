@@ -21,6 +21,34 @@ import zmq
 FS = 220.0
 
 
+class SockLotes:
+    """Envuelve el socket SUB: los mensajes por lote de stream.py (EEG_LOTE a 220 Hz y EEG_DET a 110 Hz) se entregan muestra
+    por muestra con el formato de antes ({"tipo": "EEG", "TP9_raw": ...} y {"tipo": "EEG_DET", "TP9_raw": ..., "TP9_filtrado": ...}),
+    asi el resto del programa no cambia."""
+    CAN = ("TP9", "FP1", "FP2", "TP10")
+
+    def __init__(self, sock):
+        from collections import deque
+        self._sock, self._pend = sock, deque()
+
+    def __getattr__(self, nombre):
+        return getattr(self._sock, nombre)
+
+    def recv_json(self, *a, **k):
+        while not self._pend:
+            m = self._sock.recv_json(*a, **k)
+            t = m.get("tipo")
+            if t == "EEG_LOTE":
+                for i in range(len(m["TP9"])):
+                    self._pend.append({"tipo": "EEG", **{f"{c}_raw": m[c][i] for c in self.CAN}})
+            elif t == "EEG_DET":
+                for i in range(len(m["TP9_raw"])):
+                    self._pend.append({"tipo": "EEG_DET", **{f"{c}_{s}": m[f"{c}_{s}"][i] for c in self.CAN for s in ("raw", "filtrado")}})
+            else:
+                return m
+        return self._pend.popleft()
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--ip', default='192.168.1.50')
@@ -34,6 +62,7 @@ def main():
     sock.setsockopt(zmq.RCVHWM, 0)
     sock.connect(f"tcp://{a.ip}:{a.puerto}")
     sock.setsockopt_string(zmq.SUBSCRIBE, "")
+    sock = SockLotes(sock)
     print(f"Escuchando tcp://{a.ip}:{a.puerto} durante {a.segundos:.0f} s (Ctrl+C para cortar antes)\n")
 
     t_ini = time.time()

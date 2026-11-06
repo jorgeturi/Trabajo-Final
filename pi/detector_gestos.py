@@ -83,9 +83,9 @@ class P:
     bloqueo_post_s: float = 0.0     # si > 0, las rafagas que lleguen dentro de este tiempo despues de contar un gesto tampoco cuentan (0 = no; con 1 s se
                                     # pierden los intentos que se hacen enseguida de otro: 45 -> 43 de 62 marcas)
     exigir_contacto: bool = True    # sin contacto en los frontales (horseshoe) no se detecta: la vincha no esta puesta
-    contacto_min_s: float = 0.5     # el sin contacto debe durar al menos esto (una ventana): un gesto lo produce un instante
+    contacto_min_s: float = 1.5     # el sin contacto debe durar al menos esto (una ventana): un gesto lo produce un instante
     rearme_s: float = 1.0           # tras volver el contacto sigue bloqueado este tiempo (el asentamiento de la vincha da artefactos)
-    reinicio_s: float = 2.0         # si estuvo sin contacto al menos esto, al volver se vuelve a calibrar (la señal y el ruido son otros)
+    reinicio_s: float = 3.0         # si estuvo sin contacto al menos esto, al volver se vuelve a calibrar (la señal y el ruido son otros)
     bloquear_calibracion: bool = True   # mientras calibra (arranque o reinicio) no se detecta: el margen de partida es solo un valor provisorio
     evid_th: dict = field(default_factory=lambda: {'der_F': 10.6, 'hp_F': 11.0, 'lp_F': 10.3, 'ncc_F': 0.59,
                                                    'corrFF': 0.69, 'corrTT': 0.86, 'corrFT': 0.41})

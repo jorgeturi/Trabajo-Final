@@ -17,9 +17,12 @@ import config
 # ==========================================
 # 1. CONFIGURACION GENERAL
 # ==========================================
-ip_pc = "192.168.1.55"
-puerto_pc = 5000
-cliente_espejo = udp_client.SimpleUDPClient(ip_pc, puerto_pc)
+# Espejo UDP: copia sin procesar de cada mensaje OSC hacia la PC (opcional, se activa en config.py)
+cliente_espejo = udp_client.SimpleUDPClient(config.ESPEJO_IP, config.ESPEJO_PUERTO) if config.ESPEJO_UDP else None
+
+def espejo(address, args):
+    if cliente_espejo is not None:
+        cliente_espejo.send_message(address, args)
 
 context = zmq.Context()
 zmq_socket = context.socket(zmq.PUB)
@@ -42,6 +45,7 @@ control_motores = ControladorMotores()
 # ==========================================
 fs = 220.0                                    # tasa de EEG de la vincha
 fs_det = fs / config.SUBMUESTREO_DETECTOR     # tasa con la que trabaja el detector (110 Hz)
+CANALES = ("TP9", "FP1", "FP2", "TP10")
 nyq = 0.5 * fs
 
 # --- Detección por umbral (flag de activación que se envía a la Pico) ---
@@ -120,8 +124,8 @@ def hilo_detector():
             traceback.print_exc()            # el hilo sigue vivo aunque falle una ventana
 
 def publicar_eeg_detector(lote, detector):
-    """Publica por ZMQ el EEG que analiza el detector: crudo (submuestreado a 110 Hz) y filtrado por SU pasabanda de 8-30 Hz
-    (no hay un filtro aparte para visualizar). Las ultimas len(lote) muestras de flujo.sig son las de este lote."""
+    """Publica por ZMQ, en UN mensaje por lote (EEG_DET), el EEG que analiza el detector: crudo (submuestreado a 110 Hz) y
+    filtrado por SU pasabanda de 8-30 Hz (no hay un filtro aparte). Las ultimas len(lote) muestras de flujo.sig son las de este lote."""
     n = len(lote)
     if n == 0:
         return
@@ -129,14 +133,12 @@ def publicar_eeg_detector(lote, detector):
     if sig.shape[1] < n:
         return
     filt = sig[:, -n:]
+    paquete = {"tipo": "EEG_DET", "fs": fs_det}
+    for k, c in enumerate(CANALES):
+        paquete[c + "_raw"] = [float(m[k]) for m in lote]
+        paquete[c + "_filtrado"] = [round(float(v), 3) for v in filt[k]]
     with zmq_lock:
-        for i in range(n):
-            zmq_socket.send_json({
-                "tipo": "EEG",
-                "TP9_raw": float(lote[i][0]),  "TP9_filtrado": float(filt[0, i]),
-                "FP1_raw": float(lote[i][1]),  "FP1_filtrado": float(filt[1, i]),
-                "FP2_raw": float(lote[i][2]),  "FP2_filtrado": float(filt[2, i]),
-                "TP10_raw": float(lote[i][3]), "TP10_filtrado": float(filt[3, i])})
+        zmq_socket.send_json(paquete)
 
 def calcular_estado(hubo_datos, cortado, invertida, sin_contacto_s, verificando, calibrando, activacion):
     """Estado que se informa a la Pico (texto). De mayor a menor prioridad:
@@ -182,34 +184,86 @@ def reiniciar_deteccion():
             pass
 
 # ==========================================
+# 2b. HILO DE ENVIO UART (ritmo fijo, independiente del procesamiento)
+# ==========================================
+# El hilo procesador solo deja aca la ultima trama armada; este hilo la manda cada PERIODO_ENVIO_S exactos (reloj monotonic,
+# con hora fija para la proxima, no un sleep despues del trabajo). No publica por ZMQ ni toma zmq_lock: lo unico que hace es escribir.
+# Falla segura: si el procesador no renueva la trama en TRAMA_VIEJA_S, se deja de enviar y la Pico corta a los 500 ms como antes.
+PERIODO_ENVIO_S = 0.05
+TRAMA_VIEJA_S = 0.5
+trama_lock = threading.Lock()
+trama_actual = {"args": None, "t": 0.0}       # args de pico_serial.enviar_estado y cuando los dejo el procesador (monotonic)
+med_envio = {"trama": "", "ok": False, "dt_max_ms": 0, "retraso_max_ms": 0, "escritura_max_ms": 0.0, "viejas": 0}
+
+def hilo_envio_uart():
+    prox = time.monotonic()
+    ultimo = None
+    while True:
+        prox += PERIODO_ENVIO_S
+        espera = prox - time.monotonic()
+        if espera > 0:
+            time.sleep(espera)
+        ahora = time.monotonic()
+        retraso_ms = int((ahora - prox) * 1000)       # cuanto se desperto tarde respecto de la hora prevista
+        if retraso_ms > PERIODO_ENVIO_S * 1000:       # si se atraso mas de un periodo no se intenta "recuperar" mandando rafagas
+            prox = ahora
+        with trama_lock:
+            args, t_trama = trama_actual["args"], trama_actual["t"]
+        if args is None:
+            continue
+        if ahora - t_trama > TRAMA_VIEJA_S:           # el procesador esta colgado: no se reenvian PWM viejos
+            with trama_lock:
+                med_envio["viejas"] += 1
+            continue
+        t0 = time.monotonic()
+        trama, ok = pico_serial.enviar_estado(*args)
+        fin = time.monotonic()
+        dt_ms = int((fin - ultimo) * 1000) if ultimo is not None else 0
+        ultimo = fin
+        with trama_lock:                              # maximos desde la ultima publicacion (el procesador los lee y los pone a 0)
+            med_envio["trama"], med_envio["ok"] = trama, ok
+            med_envio["dt_max_ms"] = max(med_envio["dt_max_ms"], dt_ms)
+            med_envio["retraso_max_ms"] = max(med_envio["retraso_max_ms"], retraso_ms)
+            med_envio["escritura_max_ms"] = max(med_envio["escritura_max_ms"], round((fin - t0) * 1000, 1))
+
+def leer_med_envio():
+    """Copia de las mediciones del hilo de envio y reinicio de los maximos."""
+    with trama_lock:
+        m = dict(med_envio)
+        med_envio["dt_max_ms"] = 0
+        med_envio["retraso_max_ms"] = 0
+        med_envio["escritura_max_ms"] = 0.0
+    return m
+
+# ==========================================
 # 3. HANDLERS OSC (Mismos que antes)
 # ==========================================
 def procesar_eeg(address, *args):
-    cliente_espejo.send_message(address, args)
+    espejo(address, args)
     with buffer_lock: buffer_eeg.append(args[:4])
 
 def procesar_acc(address, *args):
-    cliente_espejo.send_message(address, args)
+    espejo(address, args)
     with buffer_lock: buffer_eventos.append({"tipo": "ACC", "x": float(args[0]), "y": float(args[1]), "z": float(args[2])})
 
 def procesar_parpadeo(address, *args):
-    cliente_espejo.send_message(address, args)
+    espejo(address, args)
     with buffer_lock: buffer_eventos.append({"tipo": "BLINK", "valor": int(args[0])})
 
 def procesar_mandibula(address, *args):
-    cliente_espejo.send_message(address, args)
+    espejo(address, args)
     with buffer_lock: buffer_eventos.append({"tipo": "JAW_CLENCH", "valor": int(args[0])})
 
 def procesar_herradura(address, *args):
-    cliente_espejo.send_message(address, args)
+    espejo(address, args)
     with buffer_lock: buffer_eventos.append({"tipo": "HORSESHOE", "TP9": int(args[0]), "FP1": int(args[1]), "FP2": int(args[2]), "TP10": int(args[3])})
 
 def procesar_frente(address, *args):
-    cliente_espejo.send_message(address, args)
+    espejo(address, args)
     with buffer_lock: buffer_eventos.append({"tipo": "FRENTE", "valor": int(args[0])})
 
 def procesar_resto(address, *args):
-    cliente_espejo.send_message(address, args)
+    espejo(address, args)
     with buffer_lock: buffer_eventos.append({"tipo": "OTRO", "address": address, "args": list(args)})
 
 # ==========================================
@@ -226,15 +280,18 @@ def hilo_procesador_bci():
     # --- WATCHDOG DE LA VINCHA ---
     tiempo_ultimo_dato = time.time()
     activacion = 0
-    ultimo_envio = time.time()    # para medir cada cuánto se manda la trama por UART (debería ser ~50 ms)
-    dt_envio_ms = 0
+    dt_envio_ms = 0               # maximo tiempo entre tramas hacia la Pico (lo mide hilo_envio_uart; deberia ser ~50 ms)
+    trabajo_ms = 0.0              # cuanto tardo la vuelta anterior del lazo sin contar el sleep
     estado_anterior = "INICIO"
     hubo_datos = False        # llegó algún dato de la vincha desde que arrancó (para distinguir INICIO de un corte)
     sin_cont_desde = None     # desde cuándo fallan los dos FP o los dos TP (contacto > config.CONTACTO_FALLA)
     TIMEOUT_VINCHA = 0.5  # Segundos sin recibir datos antes de cortar motores
     
     while True:
-        time.sleep(0.05) 
+        t_antes = time.monotonic()
+        time.sleep(0.05)
+        t_vuelta = time.monotonic()
+        sleep_ms = int((t_vuelta - t_antes) * 1000)   # deberia ser ~50: si da mucho mas, el proceso o la Pi estuvieron frenados
         
         with buffer_lock:
             lote_eeg = buffer_eeg.copy()
@@ -326,17 +383,20 @@ def hilo_procesador_bci():
         # ---------------------------------------------------------
         # ENVÍO 1: UART HACIA LA PICO (Físico)
         # ---------------------------------------------------------
-        ahora_envio = time.time()
-        dt_envio_ms = int((ahora_envio - ultimo_envio) * 1000)
-        ultimo_envio = ahora_envio
-        trama_enviada, trama_ok = pico_serial.enviar_estado(
-            contacto_tp9, contacto_fp1, contacto_fp2, contacto_tp10, 
-            pwm1, pwm2, activacion, estado
-        )
+        # El envio lo hace hilo_envio_uart a ritmo fijo: aca solo se deja la trama nueva
+        with trama_lock:
+            trama_actual["args"] = (contacto_tp9, contacto_fp1, contacto_fp2, contacto_tp10, pwm1, pwm2, activacion, estado)
+            trama_actual["t"] = time.monotonic()
+        med = leer_med_envio()
+        dt_envio_ms = med["dt_max_ms"]
         # Lo que realmente se manda a la Pico, publicado por ZMQ para compararlo con lo que ve la Pico (ver filtro/ver_deteccion.py)
+        # Medicion: dt_ms = mayor hueco entre tramas desde la publicacion anterior; retraso_ms / escritura_ms = del hilo de envio;
+        # sleep_ms / trabajo_ms = del lazo procesador; cola = lotes que esperan al detector.
         with zmq_lock:
-            zmq_socket.send_json({"tipo": "TRAMA_PICO", "trama": trama_enviada, "ok": trama_ok, "errores": pico_serial.errores,
+            zmq_socket.send_json({"tipo": "TRAMA_PICO", "trama": med["trama"], "ok": med["ok"], "errores": pico_serial.errores,
                                   "dt_ms": dt_envio_ms, "estado": estado, "activacion": activacion, "pwm1": pwm1, "pwm2": pwm2,
+                                  "retraso_ms": med["retraso_max_ms"], "escritura_ms": med["escritura_max_ms"], "viejas": med["viejas"],
+                                  "sleep_ms": sleep_ms, "trabajo_ms": trabajo_ms, "cola": cola_det.qsize(),
                                   "motivo": motivo_emergencia(cortado, control_motores.invertida, sin_contacto_s) if estado == "EMERGENCIA" else ""})
         
         # ---------------------------------------------------------
@@ -360,12 +420,15 @@ def hilo_procesador_bci():
             with zmq_lock:
                 zmq_socket.send_json(paquete_debug_motor)
                 
-        # 3. EEG crudo sin detector adaptativo (si el detector no arranca, se publica solo el crudo)
-        if lote_eeg and not (USA_ADAPTATIVO and not estado_det["fallo"]):
+        # 3. EEG crudo de la vuelta, a la tasa completa (220 Hz), en UN mensaje por lote (EEG_LOTE)
+        if lote_eeg:
+            paquete_eeg = {"tipo": "EEG_LOTE", "fs": fs}
+            for k, c in enumerate(CANALES):
+                paquete_eeg[c] = [float(m[k]) for m in lote_eeg]
             with zmq_lock:
-                for m in lote_eeg:
-                    zmq_socket.send_json({"tipo": "EEG", "TP9_raw": float(m[0]), "FP1_raw": float(m[1]),
-                                          "FP2_raw": float(m[2]), "TP10_raw": float(m[3])})
+                zmq_socket.send_json(paquete_eeg)
+
+        trabajo_ms = round((time.monotonic() - t_vuelta) * 1000, 1)
 
 
 # ==========================================
@@ -390,6 +453,7 @@ print("===================================================")
 if USA_ADAPTATIVO:
     threading.Thread(target=hilo_detector, daemon=True).start()
 threading.Thread(target=hilo_procesador_bci, daemon=True).start()
+threading.Thread(target=hilo_envio_uart, daemon=True).start()
 
 try:
     server.serve_forever()

@@ -134,9 +134,9 @@ class P:
     bloqueo_post_s: float = 0.0     # si > 0, las rafagas que lleguen dentro de este tiempo despues de contar un gesto tampoco cuentan (0 = no; con 1 s se
                                     # pierden los intentos que se hacen enseguida de otro: 45 -> 43 de 62 marcas)
     exigir_contacto: bool = True    # sin contacto en los frontales (horseshoe) no se detecta: la vincha no esta puesta
-    contacto_min_s: float = 0.5     # el sin contacto debe durar al menos esto (una ventana): un gesto lo produce un instante
+    contacto_min_s: float = 1.5     # el sin contacto debe durar al menos esto (una ventana): un gesto lo produce un instante
     rearme_s: float = 1.0           # tras volver el contacto sigue bloqueado este tiempo (el asentamiento de la vincha da artefactos)
-    reinicio_s: float = 2.0         # si estuvo sin contacto al menos esto, al volver se vuelve a calibrar (la señal y el ruido son otros)
+    reinicio_s: float = 3.0         # si estuvo sin contacto al menos esto, al volver se vuelve a calibrar (la señal y el ruido son otros)
     bloquear_calibracion: bool = True   # mientras calibra (arranque o reinicio) no se detecta: el margen de partida es solo un valor provisorio
     evid_th: dict = field(default_factory=lambda: {'der_F': 10.6, 'hp_F': 11.0, 'lp_F': 10.3, 'ncc_F': 0.59,
                                                    'corrFF': 0.69, 'corrTT': 0.86, 'corrFT': 0.41})
@@ -1020,6 +1020,34 @@ class Sesion:
         return texto
 
 
+class SockLotes:
+    """Envuelve el socket SUB: los mensajes por lote de stream.py (EEG_LOTE a 220 Hz y EEG_DET a 110 Hz) se entregan muestra
+    por muestra con el formato de antes ({"tipo": "EEG", "TP9_raw": ...} y {"tipo": "EEG_DET", "TP9_raw": ..., "TP9_filtrado": ...}),
+    asi el resto del programa no cambia."""
+    CAN = ("TP9", "FP1", "FP2", "TP10")
+
+    def __init__(self, sock):
+        from collections import deque
+        self._sock, self._pend = sock, deque()
+
+    def __getattr__(self, nombre):
+        return getattr(self._sock, nombre)
+
+    def recv_json(self, *a, **k):
+        while not self._pend:
+            m = self._sock.recv_json(*a, **k)
+            t = m.get("tipo")
+            if t == "EEG_LOTE":
+                for i in range(len(m["TP9"])):
+                    self._pend.append({"tipo": "EEG", **{f"{c}_raw": m[c][i] for c in self.CAN}})
+            elif t == "EEG_DET":
+                for i in range(len(m["TP9_raw"])):
+                    self._pend.append({"tipo": "EEG_DET", **{f"{c}_{s}": m[f"{c}_{s}"][i] for c in self.CAN for s in ("raw", "filtrado")}})
+            else:
+                return m
+        return self._pend.popleft()
+
+
 # ==========================================
 # 7. ENTRADA ZMQ
 # ==========================================
@@ -1030,7 +1058,7 @@ def conectar(ip, puerto=PUERTO):
     sock.connect(f"tcp://{ip}:{puerto}")
     sock.setsockopt(zmq.RCVHWM, 0)                   # sin tope de cola: si la interfaz se atrasa, no se descartan muestras
     sock.setsockopt_string(zmq.SUBSCRIBE, "")
-    return zmq, context, sock
+    return zmq, context, SockLotes(sock)
 
 
 def drenar(zmq, sock, sesion):
