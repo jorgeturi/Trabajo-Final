@@ -32,6 +32,7 @@ zmq_lock = threading.Lock()
 buffer_eeg = []
 buffer_eventos = []
 buffer_lock = threading.Lock()
+buffer_t0 = [None]       # hora (monotonic) en que llego el primer dato del lote actual: punto de partida de la latencia
 
 # Submuestreo del EEG hacia el detector: se pasa 1 de cada config.SUBMUESTREO_DETECTOR muestras (220 Hz -> 110 Hz)
 contador_submuestreo = 0
@@ -79,7 +80,9 @@ def reiniciar_activacion():
 # --- Detector adaptativo (detector_gestos.py) en su propio hilo: no frena el bucle de motores ni la UART ---
 USA_ADAPTATIVO = (config.DETECTOR == "adaptativo")
 cola_det = queue.Queue(maxsize=400)          # lotes EEG pendientes (~20 s); si se llena se descarta el lote nuevo
-estado_det = {"activacion": 0, "limpio": True, "fallo": False, "calibrando": True}
+estado_det = {"activacion": 0, "limpio": True, "fallo": False, "calibrando": True,
+              "senal_sin_contacto": {"FP": True, "TP": True}}   # lo actualiza el detector; True = no confirma nada (decide solo el horseshoe)
+acc_det = deque(maxlen=2000)     # (monotonic, x, y, z) del acelerometro para el veto por movimiento de cabeza del detector
 
 def hilo_detector():
     try:
@@ -101,6 +104,7 @@ def hilo_detector():
                 continue
             if lote is None:                 # vincha desconectada: se vuelve a calibrar al reconectar
                 detector.reiniciar()
+                estado_det["senal_sin_contacto"] = {"FP": True, "TP": True}
                 estado_det["activacion"] = 0
                 estado_det["calibrando"] = True
                 continue
@@ -109,6 +113,10 @@ def hilo_detector():
                 detector.contacto(cont)
             if "frente" in estado_det and hasattr(detector, "frente"):
                 detector.frente(estado_det["frente"])
+            while acc_det:                   # ACC llegado desde el lote anterior (mismo reloj monotonic que usa el detector)
+                t_a, x_a, y_a, z_a = acc_det.popleft()
+                if hasattr(detector, "acc"):
+                    detector.acc(x_a, y_a, z_a, t_a)
             t0 = time.perf_counter()
             paquetes = detector.procesar(lote)
             ms = round((time.perf_counter() - t0) * 1000, 1)
@@ -118,6 +126,8 @@ def hilo_detector():
                 paquete["cola"] = cola_det.qsize()   # lotes esperando: si crece, el detector se atrasa
                 estado_det["activacion"] = paquete["activacion"]
                 estado_det["calibrando"] = paquete["calibrando"]
+                if "senal_sin_contacto" in paquete:
+                    estado_det["senal_sin_contacto"] = paquete["senal_sin_contacto"]
                 with zmq_lock:
                     zmq_socket.send_json(paquete)
         except Exception:
@@ -140,26 +150,29 @@ def publicar_eeg_detector(lote, detector):
     with zmq_lock:
         zmq_socket.send_json(paquete)
 
-def calcular_estado(hubo_datos, cortado, invertida, sin_contacto_s, verificando, calibrando, activacion):
+def calcular_estado(hubo_datos, cortado, invertida, falla_contacto, verificando, calibrando, activacion, limitada=False):
     """Estado que se informa a la Pico (texto). De mayor a menor prioridad:
-    INICIO (todavia no llegaron datos) > EMERGENCIA (se cortó el flujo, vincha al revés o falla de 2 FP o de 2 TP por mas de 5 s)
-    > CALIBRACION (verificando el eje Y o calibrando el filtro) > MARCHA (activacion en 1) > REPOSO."""
+    INICIO (todavia no llegaron datos) > EMERGENCIA (se cortó el flujo, vincha al revés, falla de 2 FP por 0,7 s o de 2 TP por 5 s)
+    > CALIBRACION (verificando el eje Y o calibrando el filtro) > MARCHA LIMITADA (activacion en 1 con 1 FP y 1 TP en falla 5 s)
+    > MARCHA (activacion en 1) > REPOSO."""
     if not hubo_datos:
         return "INICIO"
-    if cortado or invertida or sin_contacto_s >= config.SIN_CONTACTO_EMERGENCIA_S:
+    if cortado or invertida or falla_contacto:
         return "EMERGENCIA"
     if verificando or calibrando:
         return "CALIBRACION"
-    return "MARCHA" if activacion else "REPOSO"
+    if activacion:
+        return "MARCHA LIMITADA" if limitada else "MARCHA"
+    return "REPOSO"
 
-def motivo_emergencia(cortado, invertida, sin_contacto_s):
+def motivo_emergencia(cortado, invertida, falla_contacto):
     """Por qué el estado es EMERGENCIA (solo para publicar y diagnosticar)."""
     if cortado:
         return "FLUJO CORTADO"
     if invertida:
         return "VINCHA AL REVES"
-    if sin_contacto_s >= config.SIN_CONTACTO_EMERGENCIA_S:
-        return "FALLA DE CONTACTO (2 FP o 2 TP)"
+    if falla_contacto:
+        return falla_contacto
     return ""
 
 def apagar_deteccion():
@@ -192,8 +205,8 @@ def reiniciar_deteccion():
 PERIODO_ENVIO_S = 0.05
 TRAMA_VIEJA_S = 0.5
 trama_lock = threading.Lock()
-trama_actual = {"args": None, "t": 0.0}       # args de pico_serial.enviar_estado y cuando los dejo el procesador (monotonic)
-med_envio = {"trama": "", "ok": False, "dt_max_ms": 0, "retraso_max_ms": 0, "escritura_max_ms": 0.0, "viejas": 0}
+trama_actual = {"args": None, "t": 0.0, "t0": None}   # args de pico_serial.enviar_estado, cuando los dejo el procesador y llegada del lote (monotonic)
+med_envio = {"trama": "", "ok": False, "dt_max_ms": 0, "retraso_max_ms": 0, "escritura_max_ms": 0.0, "viejas": 0, "latencia_uart_max_ms": 0.0}
 
 def hilo_envio_uart():
     prox = time.monotonic()
@@ -208,7 +221,7 @@ def hilo_envio_uart():
         if retraso_ms > PERIODO_ENVIO_S * 1000:       # si se atraso mas de un periodo no se intenta "recuperar" mandando rafagas
             prox = ahora
         with trama_lock:
-            args, t_trama = trama_actual["args"], trama_actual["t"]
+            args, t_trama, t0_lote = trama_actual["args"], trama_actual["t"], trama_actual["t0"]
         if args is None:
             continue
         if ahora - t_trama > TRAMA_VIEJA_S:           # el procesador esta colgado: no se reenvian PWM viejos
@@ -225,6 +238,8 @@ def hilo_envio_uart():
             med_envio["dt_max_ms"] = max(med_envio["dt_max_ms"], dt_ms)
             med_envio["retraso_max_ms"] = max(med_envio["retraso_max_ms"], retraso_ms)
             med_envio["escritura_max_ms"] = max(med_envio["escritura_max_ms"], round((fin - t0) * 1000, 1))
+            if t0_lote is not None:                   # latencia total en la Pi: llegada del dato -> trama escrita en la UART
+                med_envio["latencia_uart_max_ms"] = max(med_envio["latencia_uart_max_ms"], round((fin - t0_lote) * 1000, 1))
 
 def leer_med_envio():
     """Copia de las mediciones del hilo de envio y reinicio de los maximos."""
@@ -233,18 +248,30 @@ def leer_med_envio():
         med_envio["dt_max_ms"] = 0
         med_envio["retraso_max_ms"] = 0
         med_envio["escritura_max_ms"] = 0.0
+        med_envio["latencia_uart_max_ms"] = 0.0
     return m
 
 # ==========================================
 # 3. HANDLERS OSC (Mismos que antes)
 # ==========================================
+def marcar_llegada():
+    """Guarda la hora de llegada del primer dato del lote (se llama con buffer_lock tomado)."""
+    if buffer_t0[0] is None:
+        buffer_t0[0] = time.monotonic()
+
 def procesar_eeg(address, *args):
     espejo(address, args)
-    with buffer_lock: buffer_eeg.append(args[:4])
+    with buffer_lock:
+        marcar_llegada()
+        buffer_eeg.append(args[:4])
 
 def procesar_acc(address, *args):
     espejo(address, args)
-    with buffer_lock: buffer_eventos.append({"tipo": "ACC", "x": float(args[0]), "y": float(args[1]), "z": float(args[2])})
+    with buffer_lock:
+        marcar_llegada()
+        buffer_eventos.append({"tipo": "ACC", "x": float(args[0]), "y": float(args[1]), "z": float(args[2])})
+    if USA_ADAPTATIVO:
+        acc_det.append((time.monotonic(), float(args[0]), float(args[1]), float(args[2])))
 
 def procesar_parpadeo(address, *args):
     espejo(address, args)
@@ -284,7 +311,9 @@ def hilo_procesador_bci():
     trabajo_ms = 0.0              # cuanto tardo la vuelta anterior del lazo sin contar el sleep
     estado_anterior = "INICIO"
     hubo_datos = False        # llegó algún dato de la vincha desde que arrancó (para distinguir INICIO de un corte)
-    sin_cont_desde = None     # desde cuándo fallan los dos FP o los dos TP (contacto > config.CONTACTO_FALLA)
+    fp_falla_desde = None     # desde cuándo fallan los dos FP (contacto > config.CONTACTO_FALLA y la señal lo confirma)
+    tp_falla_desde = None     # desde cuándo fallan los dos TP
+    lim_desde = None          # desde cuándo falla al menos 1 FP y al menos 1 TP (para MARCHA LIMITADA)
     TIMEOUT_VINCHA = 0.5  # Segundos sin recibir datos antes de cortar motores
     
     while True:
@@ -298,6 +327,8 @@ def hilo_procesador_bci():
             lote_eventos = buffer_eventos.copy()
             buffer_eeg.clear()
             buffer_eventos.clear()
+            t0_lote = buffer_t0[0]
+            buffer_t0[0] = None
             
         # Si llegaron datos nuevos (EEG o Eventos), actualizamos el reloj del Watchdog
         if lote_eeg or lote_eventos:
@@ -362,19 +393,37 @@ def hilo_procesador_bci():
         # --- ESTADO (texto) PARA LA PICO ---
         cortado = (time.time() - tiempo_ultimo_dato) > TIMEOUT_VINCHA
         falla = config.CONTACTO_FALLA
-        falla_par = (contacto_fp1 > falla and contacto_fp2 > falla) or (contacto_tp9 > falla and contacto_tp10 > falla)
-        if falla_par and hubo_datos and not cortado:
-            if sin_cont_desde is None:
-                sin_cont_desde = time.time()
-        else:
-            sin_cont_desde = None
-        sin_contacto_s = (time.time() - sin_cont_desde) if sin_cont_desde is not None else 0.0
-        estado = calcular_estado(hubo_datos, cortado, control_motores.invertida, sin_contacto_s,
+        # Falla de un par segun el horseshoe, confirmada por la señal que mide el detector adaptativo (el horseshoe a veces se traba en 4
+        # con la vincha bien puesta). Sin detector adaptativo decide solo el horseshoe, como antes.
+        conf = estado_det["senal_sin_contacto"] if (USA_ADAPTATIVO and not estado_det["fallo"]) else {"FP": True, "TP": True}
+        ahora = time.time()
+        vigila = hubo_datos and not cortado
+        falla_fp = vigila and contacto_fp1 > falla and contacto_fp2 > falla and conf.get("FP", True)
+        falla_tp = vigila and contacto_tp9 > falla and contacto_tp10 > falla and conf.get("TP", True)
+        fp_falla_desde = (fp_falla_desde or ahora) if falla_fp else None
+        tp_falla_desde = (tp_falla_desde or ahora) if falla_tp else None
+        falla_contacto = ""
+        if fp_falla_desde is not None and ahora - fp_falla_desde >= config.SIN_CONTACTO_FP_EMERGENCIA_S:
+            falla_contacto = "FALLA DE CONTACTO (2 FP)"
+        elif tp_falla_desde is not None and ahora - tp_falla_desde >= config.SIN_CONTACTO_EMERGENCIA_S:
+            falla_contacto = "FALLA DE CONTACTO (2 TP)"
+        # MARCHA LIMITADA: al menos 1 FP y al menos 1 TP en falla (horseshoe) durante LIMITADA_FALLA_S seguidos
+        falla_1y1 = vigila and (contacto_fp1 > falla or contacto_fp2 > falla) and (contacto_tp9 > falla or contacto_tp10 > falla)
+        lim_desde = (lim_desde or ahora) if falla_1y1 else None
+        limitada = lim_desde is not None and ahora - lim_desde >= config.LIMITADA_FALLA_S
+        estado = calcular_estado(hubo_datos, cortado, control_motores.invertida, falla_contacto,
                                  control_motores.verificando, estado_det["calibrando"] and USA_ADAPTATIVO and not estado_det["fallo"],
-                                 activacion)
+                                 activacion, limitada)
         if estado == "EMERGENCIA" and estado_anterior != "EMERGENCIA":
             apagar_deteccion()
+        if estado != estado_anterior:          # mensaje ESTADO en cada cambio (el suscriptor sabe en que estado esta la Pi)
+            with zmq_lock:
+                zmq_socket.send_json({"tipo": "ESTADO", "estado": estado, "anterior": estado_anterior,
+                                      "motivo": motivo_emergencia(cortado, control_motores.invertida, falla_contacto) if estado == "EMERGENCIA" else ""})
         estado_anterior = estado
+        if estado == "MARCHA LIMITADA":        # potencia limitada al LIMITADA_FACTOR (70 %) del maximo normal
+            pwm1 = int(round(pwm1 * config.LIMITADA_FACTOR))
+            pwm2 = int(round(pwm2 * config.LIMITADA_FACTOR))
         if estado == "EMERGENCIA":             # en emergencia los motores quedan quietos y sin activación hacia la Pico
             pwm1 = 0
             pwm2 = 0
@@ -387,6 +436,9 @@ def hilo_procesador_bci():
         with trama_lock:
             trama_actual["args"] = (contacto_tp9, contacto_fp1, contacto_fp2, contacto_tp10, pwm1, pwm2, activacion, estado)
             trama_actual["t"] = time.monotonic()
+            if t0_lote is not None:
+                trama_actual["t0"] = t0_lote
+        latencia_ms = round((time.monotonic() - t0_lote) * 1000, 1) if t0_lote is not None else None   # llegada del dato -> trama lista
         med = leer_med_envio()
         dt_envio_ms = med["dt_max_ms"]
         # Lo que realmente se manda a la Pico, publicado por ZMQ para compararlo con lo que ve la Pico (ver filtro/ver_deteccion.py)
@@ -397,7 +449,8 @@ def hilo_procesador_bci():
                                   "dt_ms": dt_envio_ms, "estado": estado, "activacion": activacion, "pwm1": pwm1, "pwm2": pwm2,
                                   "retraso_ms": med["retraso_max_ms"], "escritura_ms": med["escritura_max_ms"], "viejas": med["viejas"],
                                   "sleep_ms": sleep_ms, "trabajo_ms": trabajo_ms, "cola": cola_det.qsize(),
-                                  "motivo": motivo_emergencia(cortado, control_motores.invertida, sin_contacto_s) if estado == "EMERGENCIA" else ""})
+                                  "latencia_uart_ms": med["latencia_uart_max_ms"],
+                                  "motivo": motivo_emergencia(cortado, control_motores.invertida, falla_contacto) if estado == "EMERGENCIA" else ""})
         
         # ---------------------------------------------------------
         # ENVÍO 2: ZMQ DEBUG MOTORES (Red)
@@ -413,6 +466,7 @@ def hilo_procesador_bci():
                 "z_filt": estado_mot["z_filt"],
                 "activacion": activacion,
                 "estado": estado,
+                "latencia_ms": latencia_ms,     # llegada del primer dato del lote -> trama lista para el hilo de envio (REQ-NF01)
                 "dt_uart_ms": dt_envio_ms,      # tiempo desde la trama anterior hacia la Pico: si pasa de ~300 ms la Pico puede mostrar SIN ENLACE
                 "zona_x": config.ZONA_MUERTA_X,
                 "zona_z": config.ZONA_MUERTA_Z

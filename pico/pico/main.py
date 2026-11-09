@@ -1,9 +1,12 @@
-from machine import Pin, I2C, UART, PWM
+from machine import Pin, I2C, UART, PWM, WDT
 import ssd1306
 import time
 
 # --- CONFIGURACION GENERAL ---
-led = Pin(25, Pin.OUT)
+try:
+    led = Pin("LED", Pin.OUT)      # LED de la placa (Pico y Pico W): cambia con cada trama valida de la Pi
+except Exception:
+    led = Pin(25, Pin.OUT)
 i2c = I2C(0, scl=Pin(1), sda=Pin(0), freq=400000)
 oled = ssd1306.SSD1306_I2C(128, 64, i2c)
 # El UART ya recibe por interrupcion: el hardware llena un buffer circular y el programa lo lee cuando puede. Un buffer mas grande
@@ -12,7 +15,7 @@ uart_pico = UART(1, baudrate=115200, tx=Pin(4), rx=Pin(5), rxbuf=1024)
 # --- FRENOS ELECTROMAGNETICOS (GP20 = pin fisico 26) ---
 # 1 = frenos aplicados, 0 = sueltos. Arranca en 1: la plataforma queda frenada hasta que la Pi active la marcha.
 # Se sueltan cuando llega activacion = 1 (y estado de marcha); se vuelven a aplicar recien cuando la rampa llevo avance y giro a 0.
-PIN_FRENO = 20
+PIN_FRENO = 26
 FRENO_APLICADO = 1
 FRENO_SUELTO = 0
 pin_freno = Pin(PIN_FRENO, Pin.OUT, value=FRENO_APLICADO)
@@ -21,14 +24,14 @@ ESTADOS_MARCHA = ("MARCHA", "MARCHA LIMITADA", "---")   # "---": la Pi no manda 
 # --- CONFIGURACION MOTORES: MOVIMIENTO DIFERENCIAL (puente H, dos PWM por motor) ---
 # Cada motor usa dos pines: IN1 gira hacia adelante, IN2 hacia atras (nunca los dos a la vez).
 # Los pines GP16 y GP17 siguen siendo los de avance de cada motor; GP18 y GP19 son los NUEVOS de retroceso (revisar el cableado).
-PIN_IZQ_ADELANTE, PIN_IZQ_ATRAS = 16, 18
-PIN_DER_ADELANTE, PIN_DER_ATRAS = 17, 19
+PIN_IZQ_ADELANTE, PIN_IZQ_ATRAS = 18, 20
+PIN_DER_ADELANTE, PIN_DER_ATRAS = 19, 21
 INVERTIR_IZQ = False             # True si al avanzar el motor izquierdo gira al reves
 INVERTIR_DER = False
 FREQ_PWM = 21000
 PWM_MAX = 16000                  # duty maximo (0-65535) cuando la Pi manda 100 o -100. Subirlo de a poco en las pruebas
-TIEMPO_MUERTO_MS = 20            # al invertir el sentido de un motor, los dos pines quedan en 0 este tiempo antes de usar el otro
-TIEMPO_RAMPA_S = 1.0             # segundos para ir de 0 a PWM_MAX (invertir el sentido a fondo tarda el doble)
+TIEMPO_MUERTO_MS = 40            # al invertir el sentido de un motor, los dos pines quedan en 0 este tiempo antes de usar el otro
+TIEMPO_RAMPA_S = 1.5             # segundos para ir de 0 a PWM_MAX (invertir el sentido a fondo tarda el doble)
 
 izq_av = PWM(Pin(PIN_IZQ_ADELANTE)); izq_at = PWM(Pin(PIN_IZQ_ATRAS))
 der_av = PWM(Pin(PIN_DER_ADELANTE)); der_at = PWM(Pin(PIN_DER_ATRAS))
@@ -53,6 +56,8 @@ giro_actual = 0.0
 izq_actual = 0
 der_actual = 0
 estado_pi = "---"                # estado en texto que informa la Pi: INICIO, CALIBRACION, REPOSO, MARCHA o EMERGENCIA
+tp9 = fp1 = fp2 = tp10 = 4         # contacto de cada electrodo que informa la Pi (1 bueno ... 4 sin contacto)
+CONTACTO_OK_MAX = 2              # 1 o 2 = bien puesto ("ok"); 3 o 4 = mal puesto ("__"), igual que CONTACTO_FALLA de la Pi
 activacion = 0                   # 0 = motores detenidos; 1 = la cabeza los maneja (alterna con cada gesto doble)
 
 # Variables de Seguridad (Watchdog UART)
@@ -128,15 +133,23 @@ def rampa(avance, giro, avance_obj, giro_obj, dt_ms):
 # --- TRAMAS ---
 def parsear(linea):
     """Una linea COMPLETA (sin el salto de linea) -> (tp9, fp1, fp2, tp10, avance, giro, activacion, estado) o None si no es valida.
-    Formato de la Pi: 7 numeros y, opcional, el estado en texto: "tp9,fp1,fp2,tp10,m1,m2,activacion[,ESTADO]"."""
+    Formato de la Pi: "tp9,fp1,fp2,tp10,avance,giro,activacion,ESTADO". Se exigen los 8 campos y que los 7 numeros esten en su rango:
+    contactos 1 a 4, avance y giro -100 a +100, activacion 0 o 1. El estado (texto) no se valida: se muestra tal cual."""
     try:
         partes = linea.decode('utf-8').strip().split(',')
-        if len(partes) not in (7, 8):
+        if len(partes) != 8:
             return None
         v = [int(x) for x in partes[:7]]
     except (ValueError, UnicodeError):
         return None
-    return v[0], v[1], v[2], v[3], v[4], v[5], v[6], (partes[7] if len(partes) == 8 else "---")
+    if not all(1 <= c <= 4 for c in v[:4]):
+        return None
+    if not (-100 <= v[4] <= 100 and -100 <= v[5] <= 100) or v[6] not in (0, 1):
+        return None
+    estado = partes[7].strip()
+    if not estado:
+        return None
+    return v[0], v[1], v[2], v[3], v[4], v[5], v[6], estado
 
 
 def sacar_lineas(buf, nuevos):
@@ -174,12 +187,11 @@ def dibujar_cara_espejada(sensor_fallo):
         oled.fill_rect(42, 28, 6, 8, 1)
         oled.fill_rect(80, 28, 6, 8, 1)
 
-    # Estado de motores para diagnostico visual (con signo: negativo = retroceso)
-    pi_ = int((izq_actual / PWM_MAX) * 100)
-    pd_ = int((der_actual / PWM_MAX) * 100)
-
     oled.text(f"Err:{sensor_fallo}", 0, 46, 1)
-    oled.text(f"I:{pi_} D:{pd_}", 0, 56, 1)
+    # Calidad de cada electrodo (donde antes iban los motores), en el orden TP9 FP1 FP2 TP10:
+    # "ok" = bien puesto (contacto 1 o 2), "__" = mal puesto (3 o 4), "??" = sin tramas de la Pi
+    marcas = ["??" if estado_pi == "SIN ENLACE" else ("ok" if v <= CONTACTO_OK_MAX else "__") for v in (tp9, fp1, fp2, tp10)]
+    oled.text(" ".join(marcas), 0, 56, 1)
     oled.text(f"A{activacion}", 112, 56, 1)
 
     oled.show()
@@ -191,6 +203,12 @@ resto_uart = b""
 tramas_ok = 0
 tramas_mal = 0
 hueco_max_ms = 0
+ultima_mal = b""                  # ultima linea rechazada (para ver en Thonny que llega realmente)
+ultima_ok_txt = b""               # ultima linea aceptada
+LOG_TRAMAS = True                 # imprime la ultima trama buena y la ultima mala en cada informe
+bytes_rx = 0                      # bytes recibidos por la UART desde el ultimo informe (validos o no)
+vuelta_max_ms = 0                 # vuelta mas larga del bucle desde el ultimo informe
+errores_pantalla = 0              # dibujos de la pantalla que fallaron (I2C)
 ultimo_ok_ms = time.ticks_ms()
 informe_ms = time.ticks_ms()
 firma_dibujo = None
@@ -200,114 +218,197 @@ ultimo_dibujo_ms = 0
 def refrescar_pantalla(ahora_ms, forzar=False):
     """Redibuja solo si cambio algo visible (estado, falla de sensor, activacion o motores redondeados a 5 %) y como mucho cada 150 ms:
     mandar el cuadro por I2C demora ~30 ms y retrasaria el resto del bucle."""
-    global firma_dibujo, ultimo_dibujo_ms
-    firma = (estado_pi, error_actual, activacion, int(izq_actual * 100 / PWM_MAX) // 5, int(der_actual * 100 / PWM_MAX) // 5)
+    global firma_dibujo, ultimo_dibujo_ms, errores_pantalla
+    firma = (estado_pi, error_actual, activacion, tp9 <= CONTACTO_OK_MAX, fp1 <= CONTACTO_OK_MAX, fp2 <= CONTACTO_OK_MAX, tp10 <= CONTACTO_OK_MAX)
     if firma == firma_dibujo:
         return
     if not forzar and time.ticks_diff(ahora_ms, ultimo_dibujo_ms) < 150:
         return
     firma_dibujo = firma
     ultimo_dibujo_ms = ahora_ms
-    dibujar_cara_espejada(error_actual)
+    try:
+        dibujar_cara_espejada(error_actual)
+    except Exception:                    # un error de I2C (ruido de los motores) no debe tirar abajo el control de los motores
+        errores_pantalla += 1
+
+
+# --- SEGURIDAD DEL PROGRAMA ---
+# Si el programa de la Pico se cae (excepcion) o se cuelga, los pines PWM siguen sacando el ultimo valor y los motores quedan andando.
+# 1) Cualquier error dentro del bucle: motores a 0, frenos aplicados, se anota y se sigue.
+# 2) Watchdog de hardware: si el bucle deja de dar vueltas, la Pico se reinicia sola (al arrancar los PWM quedan en 0 y los frenos aplicados).
+#    Arranca recien con la primera trama valida de la Pi, para poder detener el programa desde Thonny al encender.
+#    Con el cable USB conectado (Thonny) NO se activa: asi detener el programa no reinicia la Pico ni corta Thonny.
+#    En la plataforma, sin USB, queda activo. OJO: una vez activo no se puede apagar (enchufar el USB despues no lo desactiva).
+USAR_WATCHDOG = True
+try:
+    _vbus = Pin('WL_GPIO2', Pin.IN)       # Pico W: el sensado de VBUS esta en el chip inalambrico
+except Exception:
+    _vbus = Pin(24, Pin.IN)               # Pico: GP24 en 1 = hay 5 V en el USB
+
+
+def usb_conectado():
+    try:
+        return _vbus.value() == 1
+    except Exception:
+        return False
+
+
+WATCHDOG_MS = 500
+wdt = None
+errores_bucle = 0
+
+
+def parar_todo():
+    """Motores a 0 y frenos aplicados, sin depender de nada mas (se usa ante un error)."""
+    global avance_objetivo, giro_objetivo, avance_actual, giro_actual, izq_actual, der_actual, activacion
+    for p in (izq_av, izq_at, der_av, der_at):
+        try:
+            p.duty_u16(0)
+        except Exception:
+            pass
+    try:
+        pin_freno.value(FRENO_APLICADO)
+    except Exception:
+        pass
+    avance_objetivo = giro_objetivo = avance_actual = giro_actual = 0.0
+    izq_actual = der_actual = 0
+    activacion = 0
 
 
 refrescar_pantalla(time.ticks_ms(), True)
 
-while True:
-    # 1. Leer UART: se juntan los bytes disponibles, se separan las lineas completas y se usa la ULTIMA valida
-    ultima_trama = None
-    n = uart_pico.any()
-    if n:
-        nuevos = uart_pico.read(n)
-        if nuevos:
-            lineas, resto_uart = sacar_lineas(resto_uart, nuevos)
-            for linea in lineas:
-                t = parsear(linea)
-                if t is None:
-                    tramas_mal += 1
+try:
+    while True:
+        try:
+            t0_vuelta = time.ticks_ms()
+
+            # 1. Leer UART: se juntan los bytes disponibles, se separan las lineas completas y se usa la ULTIMA valida
+            ultima_trama = None
+            n = uart_pico.any()
+            if n:
+                nuevos = uart_pico.read(n)
+                if nuevos:
+                    bytes_rx += len(nuevos)
+                    lineas, resto_uart = sacar_lineas(resto_uart, nuevos)
+                    for linea in lineas:
+                        t = parsear(linea)
+                        if t is None:
+                            tramas_mal += 1
+                            ultima_mal = linea[:80]
+                        else:
+                            tramas_ok += 1
+                            ultima_trama = t
+                            ultima_ok_txt = linea[:80]
+
+            if ultima_trama:
+                tp9, fp1, fp2, tp10, avance, giro, activacion, estado_pi = ultima_trama
+                if estado_pi == "EMERGENCIA":         # emergencia: los motores se cortan de golpe
+                    activacion = 0
+                    avance_actual = 0.0
+                    giro_actual = 0.0
+
+                # REINICIAMOS EL RELOJ DE SEGURIDAD (y medimos el hueco entre tramas validas, para detectar cortes)
+                ultimo_mensaje_ms = time.ticks_ms()
+                hueco = time.ticks_diff(ultimo_mensaje_ms, ultimo_ok_ms)
+                if hueco > hueco_max_ms:
+                    hueco_max_ms = hueco
+                ultimo_ok_ms = ultimo_mensaje_ms
+
+                # Movimiento diferencial: avance (eje X) y giro (eje Z) -> motor izquierdo y derecho, con signo.
+                # Sin activacion (flag en 0) los motores quedan detenidos.
+                if activacion:
+                    avance_objetivo = max(-100, min(100, avance))
+                    giro_objetivo = max(-100, min(100, giro))
                 else:
-                    tramas_ok += 1
-                    ultima_trama = t
+                    avance_objetivo = 0.0
+                    giro_objetivo = 0.0
 
-    if ultima_trama:
-        tp9, fp1, fp2, tp10, avance, giro, activacion, estado_pi = ultima_trama
-        if estado_pi == "EMERGENCIA":         # emergencia: los motores se cortan de golpe
-            activacion = 0
-            avance_actual = 0.0
-            giro_actual = 0.0
+                # Lógica de detección de error
+                if tp9 > 2 and tp10 > 2: error_actual = "ambos_oidos"
+                elif tp9 > 2: error_actual = "oido_izq"
+                elif tp10 > 2: error_actual = "oido_der"
+                elif fp1 > 2: error_actual = "cabeza_izq"
+                elif fp2 > 2: error_actual = "cabeza_der"
+                else: error_actual = "normal"
 
-        # REINICIAMOS EL RELOJ DE SEGURIDAD (y medimos el hueco entre tramas validas, para detectar cortes)
-        ultimo_mensaje_ms = time.ticks_ms()
-        hueco = time.ticks_diff(ultimo_mensaje_ms, ultimo_ok_ms)
-        if hueco > hueco_max_ms:
-            hueco_max_ms = hueco
-        ultimo_ok_ms = ultimo_mensaje_ms
+                led.toggle()
 
-        # Movimiento diferencial: avance (eje X) y giro (eje Z) -> motor izquierdo y derecho, con signo.
-        # Sin activacion (flag en 0) los motores quedan detenidos.
-        if activacion:
-            avance_objetivo = max(-100, min(100, avance))
-            giro_objetivo = max(-100, min(100, giro))
-        else:
-            avance_objetivo = 0.0
-            giro_objetivo = 0.0
+            # ==========================================
+            # 2. CONTROL DE SEGURIDAD (WATCHDOG UART)
+            # ==========================================
+            tiempo_actual = time.ticks_ms()
+            if time.ticks_diff(tiempo_actual, ultimo_mensaje_ms) > TIMEOUT_MS:
+                # CORTE DE GOLPE: Forzamos objetivos y actuales a 0
+                avance_objetivo = 0.0
+                giro_objetivo = 0.0
+                avance_actual = 0.0
+                giro_actual = 0.0
+                activacion = 0
+                estado_pi = "SIN ENLACE"
+                error_actual = "DESC"
 
-        # Lógica de detección de error
-        if tp9 > 2 and tp10 > 2: error_actual = "ambos_oidos"
-        elif tp9 > 2: error_actual = "oido_izq"
-        elif tp10 > 2: error_actual = "oido_der"
-        elif fp1 > 2: error_actual = "cabeza_izq"
-        elif fp2 > 2: error_actual = "cabeza_der"
-        else: error_actual = "normal"
+            # ==========================================
+            # 3. MOTOR DE RAMPA SUAVE
+            # ==========================================
+            ahora_ms = time.ticks_ms()
+            dt_ms = time.ticks_diff(ahora_ms, ultimo_rampa_ms)
+            ultimo_rampa_ms = ahora_ms
+            avance_actual, giro_actual = rampa(avance_actual, giro_actual, avance_objetivo, giro_objetivo, dt_ms)
+            izq_pct, der_pct = mezclar(avance_actual, giro_actual)
+            izq_actual = a_duty(izq_pct * COMPENSACION_IZQ)
+            der_actual = a_duty(der_pct * COMPENSACION_DER)
 
-        led.toggle()
+            # Frenos: se sueltan con activacion y estado de marcha; se aplican cuando no hay activacion y la rampa ya llego a 0
+            # (en EMERGENCIA o sin tramas los valores actuales ya se pusieron en 0, asi que se aplican enseguida)
+            if activacion and estado_pi in ESTADOS_MARCHA:
+                pin_freno.value(FRENO_SUELTO)
+            elif avance_actual == 0 and giro_actual == 0:
+                pin_freno.value(FRENO_APLICADO)
 
-    # ==========================================
-    # 2. CONTROL DE SEGURIDAD (WATCHDOG UART)
-    # ==========================================
-    tiempo_actual = time.ticks_ms()
-    if time.ticks_diff(tiempo_actual, ultimo_mensaje_ms) > TIMEOUT_MS:
-        # CORTE DE GOLPE: Forzamos objetivos y actuales a 0
-        avance_objetivo = 0.0
-        giro_objetivo = 0.0
-        avance_actual = 0.0
-        giro_actual = 0.0
-        activacion = 0
-        estado_pi = "SIN ENLACE"
-        error_actual = "DESC"
+            # Aplicamos a los pines fisicos
+            escribir_motor('izq', izq_av, izq_at, izq_actual, INVERTIR_IZQ, ahora_ms)
+            escribir_motor('der', der_av, der_at, der_actual, INVERTIR_DER, ahora_ms)
 
-    # ==========================================
-    # 3. MOTOR DE RAMPA SUAVE
-    # ==========================================
-    ahora_ms = time.ticks_ms()
-    dt_ms = time.ticks_diff(ahora_ms, ultimo_rampa_ms)
-    ultimo_rampa_ms = ahora_ms
-    avance_actual, giro_actual = rampa(avance_actual, giro_actual, avance_objetivo, giro_objetivo, dt_ms)
-    izq_pct, der_pct = mezclar(avance_actual, giro_actual)
-    izq_actual = a_duty(izq_pct * COMPENSACION_IZQ)
-    der_actual = a_duty(der_pct * COMPENSACION_DER)
+            # Pantalla: solo si cambio algo (despues de mover los motores, para que dibujar no los demore)
+            refrescar_pantalla(ahora_ms)
 
-    # Frenos: se sueltan con activacion y estado de marcha; se aplican cuando no hay activacion y la rampa ya llego a 0
-    # (en EMERGENCIA o sin tramas los valores actuales ya se pusieron en 0, asi que se aplican enseguida)
-    if activacion and estado_pi in ESTADOS_MARCHA:
-        pin_freno.value(FRENO_SUELTO)
-    elif avance_actual == 0 and giro_actual == 0:
-        pin_freno.value(FRENO_APLICADO)
+            # Vuelta mas larga del bucle (lectura + motores + pantalla, sin la pausa): si se acerca a 500 ms la Pico misma provoca el SIN ENLACE
+            vuelta_ms = time.ticks_diff(time.ticks_ms(), t0_vuelta)
+            if vuelta_ms > vuelta_max_ms:
+                vuelta_max_ms = vuelta_ms
 
-    # Aplicamos a los pines fisicos
-    escribir_motor('izq', izq_av, izq_at, izq_actual, INVERTIR_IZQ, ahora_ms)
-    escribir_motor('der', der_av, der_at, der_actual, INVERTIR_DER, ahora_ms)
+            # Informe cada 2 s por la consola (Thonny): sirve para ver si la Pi manda tramas parejas o con cortes
+            if time.ticks_diff(ahora_ms, informe_ms) > 2000:
+                print("[UART] bytes:", bytes_rx, "tramas ok:", tramas_ok, "mal:", tramas_mal, "hueco max:", hueco_max_ms, "ms | vuelta max:", vuelta_max_ms,
+                      "ms | estado:", estado_pi, "act:", activacion, "| err bucle:", errores_bucle, "pantalla:", errores_pantalla)
+                if LOG_TRAMAS:
+                    print("   ok :", ultima_ok_txt)
+                    print("   mal:", ultima_mal)
+                    ultima_ok_txt = b""
+                    ultima_mal = b""
+                vuelta_max_ms = 0
+                bytes_rx = 0
+                tramas_ok = 0
+                tramas_mal = 0
+                hueco_max_ms = 0
+                informe_ms = ahora_ms
 
-    # Pantalla: solo si cambio algo (despues de mover los motores, para que dibujar no los demore)
-    refrescar_pantalla(ahora_ms)
+            # Pausa minúscula
+            time.sleep(0.01)
 
-    # Informe cada 2 s por la consola (Thonny): sirve para ver si la Pi manda tramas parejas o con cortes
-    if time.ticks_diff(ahora_ms, informe_ms) > 2000:
-        print("[UART] tramas ok:", tramas_ok, "mal:", tramas_mal, "hueco max:", hueco_max_ms, "ms | estado:", estado_pi, "act:", activacion)
-        tramas_ok = 0
-        tramas_mal = 0
-        hueco_max_ms = 0
-        informe_ms = ahora_ms
+            if wdt is not None:
+                wdt.feed()
+            elif USAR_WATCHDOG and tramas_ok > 0 and not usb_conectado():
+                wdt = WDT(timeout=WATCHDOG_MS)
+        except KeyboardInterrupt:
+            raise
+        except Exception as e:
+            parar_todo()
+            errores_bucle += 1
+            print("[ERROR] bucle:", e, "| motores a 0 y frenos aplicados (errores:", errores_bucle, ")")
+            if wdt is not None:
+                wdt.feed()
+            time.sleep(0.05)
+finally:
+    parar_todo()                         # al detener el programa (Ctrl+C en Thonny) los motores no quedan andando
 
-    # Pausa minúscula
-    time.sleep(0.01)

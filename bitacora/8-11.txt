@@ -1,0 +1,64 @@
+2026-11-08 — Hito: enlace Pi → Pico estable con la vincha conectada
+
+Contexto. Desde hacía días la Pico mostraba SIN ENLACE "cada tanto", sobre todo en los cambios de estado (conexión, calibración, gestos). Al principio parecía que la Pi dejaba de mandar, o que la pantalla de la Pico tardaba demasiado.
+
+Lo que se hizo hoy en la Pico (main.py):
+- Pines: motores izquierdo GP18/GP20, derecho GP19/GP21; freno en GP26 (el GP25 es el LED de la placa y no está en el conector).
+- Tiempos: tiempo muerto 40 ms, rampa 1,5 s.
+- LED de la placa titila con cada trama válida. Script prueba_led_freno.py para ubicar el pin del freno.
+- Diagnóstico por Thonny cada 2 s: bytes recibidos, tramas ok/mal, hueco máximo, vuelta máxima del bucle, y la última trama buena y la última mala (LOG_TRAMAS = True).
+
+Lo que mostró el diagnóstico:
+- La vuelta del bucle de la Pico nunca pasó de ~38 ms: la pantalla NO era el problema.
+- Sin la vincha: 1000 bytes y 40 tramas ok cada 2 s. Perfecto.
+- Con la vincha: llegaban ~1500 bytes cada 2 s pero casi ninguna trama válida. La "trama mala" era basura repetitiva (b'\xe0\x04c\xe0\x04b...').
+
+Causa (explicada simple). El puerto serie que usa la Pi (/dev/serial0 → ttyS0, la "mini UART") no tiene reloj propio: mide el tiempo de cada bit con el reloj del núcleo (core) de la Pi. Ese reloj cambia según la carga: cuando la vincha se conecta por Bluetooth y la Pi trabaja más (o le falta tensión), el reloj se mueve entre 400 y 250 MHz. Con él cambia la velocidad real a la que la Pi "habla": en vez de 115200 baudios salía a unos 72000, mientras la Pico seguía "escuchando" a 115200. Es como dos personas hablando a distinta velocidad: llegan sonidos, pero no se entienden palabras.
+- Por eso llegaban más bytes (1500 en vez de 1000, relación 1,5 ≈ 400/250): cada byte lento la Pico lo leía como 1,5 bytes de basura.
+- La basura se repetía porque era siempre la misma trama (CALIBRACION) leída a la velocidad equivocada. No era ruido eléctrico ni cables.
+- Bajar los baudios en ambos lados no servía: el error es proporcional (≈37 %) a cualquier velocidad, y la UART solo tolera ~3 %.
+- El código de la Pi estaba bien (serial_manager.py abre /dev/serial0 a 115200).
+
+Solución. En /boot/firmware/config.txt (se edita con sudo nano, desde VS Code no hay permiso) se agregó:
+  enable_uart=1
+  core_freq=250
+y se reinició la Pi. Así el reloj del núcleo queda fijo en 250 MHz y la velocidad de la UART no cambia más.
+
+Resultado. Con la vincha conectada y recorriendo INICIO → CALIBRACION → REPOSO → MARCHA → REPOSO → EMERGENCIA y vuelta: 40 tramas ok cada 2 s, 0 malas, hueco máximo 56–97 ms, vuelta máxima del bucle ~38 ms, sin un solo SIN ENLACE.
+
+Pendiente.
+- vcgencmd get_throttled sigue dando 0x50005 con la vincha: todavía hay baja tensión (y se cortó el SSH). Ya no rompe la UART, pero hay que corregir la alimentación: XL4015 a 5,1–5,2 V medidos en los pines de la Pi, cables cortos y gruesos, límite de corriente de al menos 3 A.
+- Agregar en la ET: core_freq=250 / enable_uart=1 como requisito de configuración de la Pi, y los pines y tiempos nuevos.
+- LOG_TRAMAS se puede dejar en False cuando no se depura.
+
+Cómo se llegó a la conclusión (no fue prueba y error).
+1. Dato conocido de la Raspberry Pi: la documentación oficial ("Configuring UARTs", raspberrypi.com/documentation/computers/configuration.html) explica que la Pi 3 tiene dos UART. La buena (PL011, ttyAMA0) la usa el Bluetooth, y a los pines GPIO14/15 queda la mini UART (ttyS0), cuya velocidad depende del reloj del núcleo (VPU, "core"). Si ese reloj cambia, cambian los baudios. Por eso la misma documentación pide enable_uart=1 y fijar el reloj del núcleo.
+2. Datos medidos en la Pi:
+   - ls -l /dev/serial0 → ttyS0: confirmó que se usaba la mini UART.
+   - vcgencmd get_throttled: 0x50005 con la vincha (bit 0 = hay baja tensión AHORA, bit 2 = la Pi se está frenando AHORA). Sin la vincha 0x50000 (hubo antes, ahora no).
+   - vcgencmd measure_clock core: 250 MHz con la vincha, 400 MHz sin ella.
+   - grep en config.txt: no estaban enable_uart ni core_freq, o sea nada fijaba el reloj.
+3. Datos medidos en la Pico (log de Thonny):
+   - Sin vincha: 1000 bytes / 2 s. Con vincha: ~1500 bytes / 2 s. Relación 1,5, muy cerca de 400/250 = 1,6. Si la Pi transmite 1,6 veces más lento, la Pico (que espera bits más cortos) parte cada byte lento en ~1,5 bytes de basura.
+   - La basura era un patrón que se repetía: la misma trama leída con la velocidad equivocada. Ruido eléctrico o un cable flojo darían basura al azar y menos bytes, no más.
+Todo cerraba con la misma explicación, y la prueba final (agregar core_freq=250) lo confirmó: 40 tramas ok con la vincha.
+
+Por qué variaba con y sin vincha (si "ya se usaba la UART").
+- Usar la UART no fija el reloj por sí solo. Lo que lo fija es enable_uart=1 / core_freq=250 en config.txt, y eso no estaba.
+- Sin nada que lo fije, el firmware de la Pi maneja el reloj del núcleo libremente: lo sube (400 MHz) o lo baja según la carga y, sobre todo, según la alimentación.
+- Con la vincha conectada, el Bluetooth y el procesamiento consumen más corriente, la tensión cae por debajo del mínimo y el firmware se protege bajando el reloj al mínimo (250 MHz). Eso indica el 0x50005.
+- El puerto se configuró a 115200 con un reloj; cuando el reloj cambió, la velocidad real cambió en la misma proporción (115200 × 250/400 ≈ 72000) sin que ningún programa se enterara.
+- Sin la vincha no hay caída de tensión, el reloj no baja y la velocidad es la correcta: por eso andaba perfecto.
+- Con core_freq=250 el reloj queda siempre en 250 MHz, el mínimo. Aunque siga faltando tensión (todavía da 0x50005), ya no tiene adónde bajar, y la UART queda siempre a 115200.
+
+Comentario. Lo que parecía un problema de software (hilos, pantalla, eventos) era un detalle de hardware de la Raspberry Pi 3 B+: su puerto serie depende del reloj del procesador gráfico. Dos líneas en config.txt y quedó andando.
+
+Actualización (noche). Alimentación corregida: vcgencmd get_throttled = 0x0 antes y después de conectar la vincha (sin baja tensión desde el arranque), reloj del núcleo fijo en 250 MHz. Pendiente cerrado.
+
+Sesión de prueba (09-11 00:18, log del suscriptor 21:18–21:22). 13 marcas y 13 gestos contados, pero no son los mismos: 12 aciertos, 1 falso positivo y 1 falso negativo que se compensan.
+- Falso positivo (GESTO #1, 21:18:33): fue al acomodarme la vincha 8 s después de terminar la calibración. Pasó a MARCHA y a los 2 s la EMERGENCIA por contacto (21:18:35) lo cortó.
+- Falso negativo (marca 3, 21:19:53): la segunda ráfaga fue débil y solo se vio "un solo pulso".
+- Un movimiento de cabeza (21:21:15) lo descartó el veto del acelerómetro en vivo.
+Por qué no se filtra el de la vincha: el horseshoe no sirve para eso. En las sesiones del 06-11 y 07-11 FP1 marcaba 4 en casi todos los gestos reales, así que bloquear con un frontal en 4 pierde casi todo. Bloquear unos segundos después de calibrar perdería gestos reales hechos a los 7–9 s, y bloquear con temporales ruidosos borra gestos reales de esta sesión.
+Limitación aceptada (para la ET): si uno se acomoda la vincha después de calibrar puede entrar un falso positivo. Mitigación: la EMERGENCIA por contacto corta la marcha. Procedimiento: ponerse la vincha, esperar los contactos "ok" en la pantalla de la Pico y recién ahí empezar.
+Decisión: las ráfagas que ocurren durante un movimiento de cabeza que no completa un gesto siguen contando como primera ráfaga. Así, si un pozo sacude la cabeza, el usuario puede desactivar con un gesto enseguida. Se evaluó descartarlas (en las 7 sesiones quitaba un falso positivo sin perder gestos), pero se prefirió no agregar demoras para desactivar.

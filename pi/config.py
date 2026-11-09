@@ -30,7 +30,13 @@ SUBMUESTREO_DETECTOR = 2
 # Falla de los DOS FP (FP1 y FP2) o de los DOS TP (TP9 y TP10) durante al menos este tiempo = EMERGENCIA.
 # Un gesto hace caer el contacto un instante, por eso no se declara emergencia antes.
 CONTACTO_FALLA = 2
-SIN_CONTACTO_EMERGENCIA_S = 5.0
+SIN_CONTACTO_FP_EMERGENCIA_S = 0.7   # los DOS FP en falla (y la señal lo confirma) durante esto = EMERGENCIA (vincha sacada)
+SIN_CONTACTO_EMERGENCIA_S = 5.0      # los DOS TP en falla durante esto = EMERGENCIA (el horseshoe de los TP se traba en 4 seguido)
+
+# --- MARCHA LIMITADA: en MARCHA, si falla al menos 1 FP y al menos 1 TP durante LIMITADA_FALLA_S seguidos, la potencia
+# (avance y giro) se multiplica por LIMITADA_FACTOR. Vuelve a MARCHA cuando deja de cumplirse la condicion. ---
+LIMITADA_FALLA_S = 5.0
+LIMITADA_FACTOR = 0.7
 
 # --- Espejo UDP (copia sin procesar de los mensajes OSC hacia la PC de monitoreo) ---
 # False = no se reenvia nada (menos trabajo en el hilo del servidor OSC cuando la PC no esta).

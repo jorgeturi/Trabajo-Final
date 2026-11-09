@@ -16,6 +16,7 @@ DESTINO = AQUI.parent / 'pi' / 'detector_gestos.py'
 CABECERA = '''# detector_gestos.py - GENERADO por filtro/exportar_a_pi.py a partir de filtro/gestos_tiempo_real.py. NO EDITAR A MANO:
 # los cambios se hacen en gestos_tiempo_real.py y se vuelve a generar este archivo.
 # Filtro de gestos con umbral adaptativo por canal (ventana 0.5 s, paso 0.25 s, 2 rafagas separadas). Requiere solo numpy y scipy.
+import time
 from collections import deque
 from dataclasses import dataclass, field
 
@@ -47,7 +48,9 @@ class DetectorGestos:
         self._sep = self.motor.p.paso_s + self.motor.p.mantener_s   # ventanas con deteccion mas juntas que esto = el mismo gesto
         self._n_reinicios = 0
 
-    def procesar(self, lote):
+    def procesar(self, lote, t=None):
+        """t: tiempo del lote en el reloj del ACC (por defecto time.monotonic(), el que usa acc())."""
+        self.motor.set_reloj(time.monotonic() if t is None else t)
         paquetes = []
         for d in self.motor.agregar(np.asarray(lote, dtype=float).reshape(-1, 4)):
             t = d['fin'] / self.fs
@@ -67,8 +70,13 @@ class DetectorGestos:
                 "via": d['via'], "freno": d['freno'],
                 "margen": {c: round(float(d['margen'][c]), 1) for c in CAN},
                 "ratios": {c: round(float(d['ratios'][c]), 2) for c in CAN},
-                "ignorado": {c: bool(d['ignorado'][c]) for c in CAN}})
+                "ignorado": {c: bool(d['ignorado'][c]) for c in CAN},
+                "senal_sin_contacto": dict(d.get('senal_off', {'FP': True, 'TP': True}))})   # stream.py lo usa para confirmar la EMERGENCIA por contacto
         return paquetes
+
+    def acc(self, x, y, z, t=None):
+        """/muse/acc (mg): sirve para descartar gestos que coinciden con un movimiento brusco de cabeza. t por defecto time.monotonic()."""
+        self.motor.set_acc(time.monotonic() if t is None else t, x, y, z)
 
     def frente(self, valor):
         """/muse/elements/touching_forehead (1 = la vincha toca la frente, 0 = no): contacto general de la vincha."""

@@ -126,15 +126,26 @@ class P:
     rebote_s: float = 1.0
     sat_min: int = 2
     sat_veto: int = 3
+    sat_persist: int = 4            # la saturacion veta solo si dura esto en ventanas seguidas (~1 s): la de un gesto es momentanea (06-11)
+    amp_fuerza: float = 2.5         # regla de amplitud: el mayor cociente frontal por el mayor temporal debe llegar a esto; si no, la rafaga
+                                    # es debil y tampoco la rescatan las otras reglas (FP de 70 s, giro suave: 1.8; gestos reales >= 3.1) (06-11)
+    veto_acc: bool = True           # descartar el gesto si hubo un movimiento brusco de cabeza (acelerometro en mg; sin datos no veta)
+    acc_cambio_mg: float = 700.0    # cambio del ACC de mas de esto en 100 ms dentro del ultimo segundo
+    acc_cambio2_mg: float = 900.0   # o de mas de esto en 250 ms dentro del ultimo segundo
+    acc_salto_mg: float = 1400.0    # o un salto (rango XYZ en +/- 0.25 s) de mas de esto en los ultimos 2 s
     mantener_s: float = 1.0
     n_pulsos: int = 2               # rafagas separadas que debe haber para contar un gesto (1 = desactivado)
     sep_pulso_s: float = 0.12       # sin superacion durante este tiempo = rafagas distintas
     doble_s: float = 2.5            # las rafagas deben caer dentro de este tiempo
     consumir_pulsos: bool = True    # al contar un gesto se descartan sus rafagas: el siguiente necesita dos rafagas NUEVAS
+    rescate_pulso: bool = True      # una ventana aceptada por una regla de rescate (sin frontal y temporal a la vez) cuenta su rafaga frontal como pulso
     bloqueo_post_s: float = 0.0     # si > 0, las rafagas que lleguen dentro de este tiempo despues de contar un gesto tampoco cuentan (0 = no; con 1 s se
                                     # pierden los intentos que se hacen enseguida de otro: 45 -> 43 de 62 marcas)
     exigir_contacto: bool = True    # sin contacto en los frontales (horseshoe) no se detecta: la vincha no esta puesta
     contacto_min_s: float = 1.5     # el sin contacto debe durar al menos esto (una ventana): un gesto lo produce un instante
+    confirmar_senal: bool = True    # el sin contacto del horseshoe solo vale si la señal tambien lo confirma (el horseshoe a veces se traba en 4)
+    senal_sin_contacto_uv: float = 60.0  # RMS 8-30 Hz (ventana de 0.5 s) del MENOR del par por encima de esto, durante contacto_min_s seguidos,
+                                    # = par sin contacto. Sin vincha da ~240 uV (99 % > 100); puesta ~5 uV y los gestos no lo sostienen 1.5 s (06-11)
     rearme_s: float = 1.0           # tras volver el contacto sigue bloqueado este tiempo (el asentamiento de la vincha da artefactos)
     reinicio_s: float = 3.0         # si estuvo sin contacto al menos esto, al volver se vuelve a calibrar (la señal y el ruido son otros)
     bloquear_calibracion: bool = True   # mientras calibra (arranque o reinicio) no se detecta: el margen de partida es solo un valor provisorio
@@ -389,10 +400,15 @@ class MotorGestos:
         self.n_sep_pulso = int(p.sep_pulso_s * fs)
         self.consumido = -10 ** 9                    # muestra hasta la que las rafagas ya se usaron en un gesto contado
         self.sin_cont_desde = None                   # muestra desde la que los dos frontales estan sin contacto (None = hay contacto o no se sabe)
+        self.cuenta_senal_off = {'FP': 0, 'TP': 0}   # ventanas seguidas en las que la señal del par parece sin contacto
+        self.senal_off = {'FP': False, 'TP': False}  # la señal confirma par sin contacto (sostenido contacto_min_s)
         self.sin_frente_desde = None                 # muestra desde la que touching_forehead vale 0 (vincha fuera de la frente)
         self.sin_vincha_desde = None                 # muestra desde la que se considera la vincha sacada (sin contacto sostenido)
         self.rearme_hasta = -1                       # muestra hasta la que sigue bloqueado despues de volver el contacto
         self.n_reinicios = 0                         # veces que se volvio a calibrar por sacar y poner la vincha
+        self.acc = deque()                           # (t, x, y, z) del acelerometro de los ultimos 3 s (mg), para el veto por movimiento
+        self.t_reloj = None                          # tiempo (s) del lote que se esta procesando, en el mismo reloj que el ACC
+        self._sat_seg = 0                            # ventanas seguidas con saturacion
         self.n_cont = int(p.contacto_min_s * fs)
         self.ultimo_exceso = {c: -10 ** 9 for c in CAN}
         self.ignorado = {c: False for c in CAN}
@@ -455,6 +471,38 @@ class MotorGestos:
         else:
             self.sin_cont_desde = None
 
+    def set_acc(self, t, x, y, z):
+        """Muestra del acelerometro (mg) con su tiempo en segundos (cualquier reloj, el mismo que set_reloj)."""
+        self.acc.append((float(t), float(x), float(y), float(z)))
+        while self.acc and self.acc[0][0] < t - 3.0:
+            self.acc.popleft()
+
+    def set_reloj(self, t):
+        """Tiempo (s) del lote que se va a procesar: el veto por ACC mira hacia atras desde aca."""
+        self.t_reloj = float(t)
+
+    def _veto_acc(self):
+        """Movimiento brusco de cabeza antes de la decision: devuelve el motivo, o '' si no hubo (o no hay datos del ACC)."""
+        p = self.p
+        if not p.veto_acc or self.t_reloj is None or len(self.acc) < 2:
+            return ''
+        a = np.array(self.acc)
+        a = a[a[:, 0] <= self.t_reloj]
+        if len(a) < 2:
+            return ''
+        T, X, ahora = a[:, 0], a[:, 1:], self.t_reloj
+        i1 = np.flatnonzero(T >= ahora - 1.0)
+        for dt, um in ((0.1, p.acc_cambio_mg), (0.25, p.acc_cambio2_mg)):
+            j = np.searchsorted(T, T[i1] + dt, side='right') - 1     # el valor vigente dt despues (el ultimo recibido hasta ese instante)
+            ok = T[i1] + dt <= ahora
+            if ok.any() and float(np.linalg.norm(X[j[ok]] - X[i1[ok]], axis=1).max()) > um:
+                return f'movimiento brusco de cabeza (ACC cambia mas de {um:.0f} mg en {dt * 1000:.0f} ms)'
+        for i in np.flatnonzero(T >= ahora - 2.0):
+            k = (T >= T[i] - 0.25) & (T <= T[i] + 0.25)
+            if float(np.linalg.norm(X[k].max(0) - X[k].min(0))) > p.acc_salto_mg:
+                return f'movimiento de cabeza (salto del ACC de mas de {p.acc_salto_mg:.0f} mg)'
+        return ''
+
     def set_frente(self, valor):
         """/muse/elements/touching_forehead (1 = la vincha toca la frente, 0 = no): el contacto general de la vincha. Sin datos nunca bloquea."""
         if valor is None:
@@ -493,9 +541,17 @@ class MotorGestos:
     def _paso(self, fin, desp, off):
         p, fs, W = self.p, self.fs, self.W
         fl = fin - off                                # indice local en la historia
+        # confirmacion por señal: RMS 8-30 Hz del menor del par, sostenido contacto_min_s (sin vincha la señal es ruido grande y continuo)
+        k_off = max(1, int(round(p.contacto_min_s / p.paso_s)))
+        for par, (a_, b_) in (('FP', FRONTALES), ('TP', TEMPORALES)):
+            rms = min(float(np.sqrt(np.mean(np.square(desp['SIG_' + c][fl - W:fl])))) for c in (a_, b_))
+            self.cuenta_senal_off[par] = self.cuenta_senal_off[par] + 1 if rms > p.senal_sin_contacto_uv else 0
+            self.senal_off[par] = self.cuenta_senal_off[par] >= k_off
         # vincha puesta o no: sin contacto en los dos frontales, o touching_forehead en 0, durante al menos una ventana
+        # (y, con confirmar_senal, que la señal de los frontales tambien parezca sin contacto)
         sin_cont = p.exigir_contacto and ((self.sin_cont_desde is not None and fin - self.sin_cont_desde >= self.n_cont) or
-                                          (self.sin_frente_desde is not None and fin - self.sin_frente_desde >= self.n_cont))
+                                          (self.sin_frente_desde is not None and fin - self.sin_frente_desde >= self.n_cont)) \
+            and (self.senal_off['FP'] or not p.confirmar_senal)
         if sin_cont:
             if self.sin_vincha_desde is None:
                 self.sin_vincha_desde = fin
@@ -522,6 +578,14 @@ class MotorGestos:
                     self.ultimo_exceso[c] = fin - W + int(np.flatnonzero(seg > margen[c])[-1])
         det = (sup['FP1'] or sup['FP2']) and (sup['TP9'] or sup['TP10'])
         via, freno = ('amplitud (un frontal y un temporal sobre su margen)' if det else ''), ''   # solo para mostrar en el tablero
+        # fuerza: frontal y temporal apenas sobre su margen = rafaga debil (giro suave de cabeza); no la rescata ninguna otra regla
+        debil = False
+        if det and p.amp_fuerza > 0:
+            f_ = max(pico[c] / margen[c] for c in FRONTALES if sup[c])
+            t_ = max(pico[c] / margen[c] for c in TEMPORALES if sup[c])
+            if f_ * t_ < p.amp_fuerza:
+                debil = True
+                det, via, freno = False, '', f'fuerza baja (frontal x temporal {f_ * t_:.2f} < {p.amp_fuerza})'
         # pares: si los dos canales de un par estan activos, ambos deben superar su margen (con excepciones por grupo fuerte)
         if det and (p.par_min > 0 or p.par_min_tp > 0):
             for a_, b_ in GRUPOS:
@@ -550,7 +614,7 @@ class MotorGestos:
             if not det:
                 via, freno = '', freno or 'coincidencia (frontal y temporal no superan el margen a la vez)'
         # solo frontales: los dos muy por encima de su margen aunque ningun temporal responda
-        if not det and p.fp_solo > 0 and not ignorado['FP1'] and not ignorado['FP2']:
+        if not det and not debil and p.fp_solo > 0 and not ignorado['FP1'] and not ignorado['FP2']:
             det = pico['FP1'] > p.fp_solo * margen['FP1'] and pico['FP2'] > p.fp_solo * margen['FP2']
             if det:
                 via = 'solo frontales (ambos 4.5 veces sobre su margen)'
@@ -563,14 +627,14 @@ class MotorGestos:
                 via, freno = '', freno or 'relacion entre canales (logica difusa)'
         # temporales inutiles (margen enorme por ruido): se decide solo con los frontales
         inutiles = p.tp_inutil > 0 and any(margen[c] >= p.tp_inutil for c in TEMPORALES)
-        if not det and inutiles:
+        if not det and not debil and inutiles:
             vivos = [c for c in FRONTALES if not ignorado[c]]
             det = bool(vivos) and all(pico[c] > p.fp_rel * margen[c] for c in vivos) and any(sup[c] for c in vivos) \
                 and len(vivos) == len(FRONTALES)
             if det:
                 via = 'temporales inutiles (margen > 300 uV): decide solo con los frontales'
         # incremento parcial: frontales activos y un temporal que sube (pico en esos instantes) aunque no llegue a su margen
-        if not det and p.parcial_umbral > 0:
+        if not det and not debil and p.parcial_umbral > 0:
             vivos = [c for c in FRONTALES if not ignorado[c]]
             tp_c = [c for c in TEMPORALES if not ignorado[c]]
             if vivos and tp_c and all(ruido[c] is not None for c in CAN):
@@ -587,7 +651,7 @@ class MotorGestos:
                     if det:
                         via = 'incremento parcial (frontales activos y un temporal sube)'
         # crecimiento de un temporal respecto del mayor pico de ruido reciente
-        if not det and p.tp_crece > 0 and not calibrando:
+        if not det and not debil and p.tp_crece > 0 and not calibrando:
             vivos = [c for c in FRONTALES if not ignorado[c] and sup[c] and pico[c] / margen[c] >= p.tp_crece_f]
             if vivos:
                 fm = np.logical_or.reduce([sobre[c] for c in FRONTALES if c in sobre])
@@ -602,9 +666,10 @@ class MotorGestos:
                     if det:
                         via = 'crecimiento del temporal sobre su ruido reciente'
         # veto por saturacion (contacto perdido)
-        if det and p.sat_veto > 0:
+        if p.sat_veto > 0:
             n_sat = sum(int(((desp['RAW_' + c][fl - W:fl] <= 1) | (desp['RAW_' + c][fl - W:fl] >= 1675)).sum()) >= p.sat_min for c in CAN)
-            if n_sat >= p.sat_veto:
+            self._sat_seg = self._sat_seg + 1 if n_sat >= p.sat_veto else 0
+            if det and n_sat >= p.sat_veto and self._sat_seg >= p.sat_persist:
                 det = False
                 via, freno = '', freno or 'saturacion (3 o mas canales tocan el limite del sensor)'
         # capa de evidencias paralelas: rescata si hay un frontal activo y al menos evid_k de 7 evidencias sobre su umbral
@@ -628,6 +693,8 @@ class MotorGestos:
                 vacio = np.zeros(W, dtype=bool)
                 co = np.logical_or.reduce([sobre.get(c, vacio) for c in FRONTALES]) & \
                     np.logical_or.reduce([sobre.get(c, vacio) for c in TEMPORALES])
+                if p.rescate_pulso and det and not co.any():   # ventana aceptada por una regla de rescate: su rafaga frontal cuenta como pulso
+                    co = np.logical_or.reduce([sobre.get(c, vacio) for c in FRONTALES if not ignorado[c]] or [vacio])
                 d_ = np.diff(np.concatenate(([0], co.astype(np.int8), [0])))
                 for a_, b_ in zip(np.flatnonzero(d_ == 1), np.flatnonzero(d_ == -1)):
                     a_, b_ = fin - W + int(a_), fin - W + int(b_)
@@ -654,6 +721,12 @@ class MotorGestos:
         if det and p.n_pulsos > 1 and p.consumir_pulsos:
             self.consumido = fin + int(p.bloqueo_post_s * fs)    # las rafagas de este gesto (y las que sigan enseguida) no se reutilizan como primer disparo del siguiente
             self.pulsos = []
+        # veto por movimiento de cabeza (acelerometro): el gesto se descarta, pero sus rafagas quedan consumidas
+        if det and p.veto_acc:
+            mov = self._veto_acc()
+            if mov:
+                det = False
+                via, freno = '', mov
         if det:
             for c in CAN:
                 if sup[c]:
@@ -721,7 +794,7 @@ class MotorGestos:
             if det:
                 self.v_det[np.arange(fin - W, fin) % self.R] = True
         previo = int(p.n_pulsos > 1 and any(q[1] >= fin - int(p.doble_s * fs) for q in self.pulsos))     # 1 = hay un gesto esperando su pareja
-        self.ultima = {'fin': fin, 't': fin / fs, 'det': det, 'calibrando': calibrando, 'ratios': ratios, 'votos': votos, 'previo': previo,
+        self.ultima = {'senal_off': dict(self.senal_off), 'fin': fin, 't': fin / fs, 'det': det, 'calibrando': calibrando, 'ratios': ratios, 'votos': votos, 'previo': previo,
                        'margen': dict(margen), 'ignorado': dict(ignorado), 'via': via if det else '', 'freno': '' if det else freno,
                        'estado': estado}
         return self.ultima
