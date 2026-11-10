@@ -20,9 +20,20 @@ import config
 # Espejo UDP: copia sin procesar de cada mensaje OSC hacia la PC (opcional, se activa en config.py)
 cliente_espejo = udp_client.SimpleUDPClient(config.ESPEJO_IP, config.ESPEJO_PUERTO) if config.ESPEJO_UDP else None
 
+espejo_errores = [0]
+
 def espejo(address, args):
-    if cliente_espejo is not None:
+    """Copia opcional hacia la PC. Si la PC no esta (apagada o fuera de la red), Linux devuelve error al enviar
+    (por ejemplo "No route to host"); ese error no puede cortar el handler, porque el dato de la Muse se perderia
+    y el flujo pareceria cortado (EMERGENCIA) hasta que aparece la PC (09-11)."""
+    if cliente_espejo is None:
+        return
+    try:
         cliente_espejo.send_message(address, args)
+    except OSError as e:
+        espejo_errores[0] += 1
+        if espejo_errores[0] == 1 or espejo_errores[0] % 5000 == 0:
+            print(f"[AVISO] Espejo UDP sin PC ({config.ESPEJO_IP}): {e} (errores: {espejo_errores[0]})", flush=True)
 
 context = zmq.Context()
 zmq_socket = context.socket(zmq.PUB)
@@ -311,8 +322,9 @@ def hilo_procesador_bci():
     trabajo_ms = 0.0              # cuanto tardo la vuelta anterior del lazo sin contar el sleep
     estado_anterior = "INICIO"
     hubo_datos = False        # llegó algún dato de la vincha desde que arrancó (para distinguir INICIO de un corte)
-    fp_falla_desde = None     # desde cuándo fallan los dos FP (contacto > config.CONTACTO_FALLA y la señal lo confirma)
+    fp_falla_desde = None     # desde cuándo fallan los dos FP (contacto > config.CONTACTO_FALLA y no toca la frente; la señal se exige al final)
     tp_falla_desde = None     # desde cuándo fallan los dos TP
+    fp_confirmada = False     # la EMERGENCIA por 2 FP ya se declaro: se mantiene mientras sigan el horseshoe y la frente en falla
     lim_desde = None          # desde cuándo falla al menos 1 FP y al menos 1 TP (para MARCHA LIMITADA)
     TIMEOUT_VINCHA = 0.5  # Segundos sin recibir datos antes de cortar motores
     
@@ -398,12 +410,22 @@ def hilo_procesador_bci():
         conf = estado_det["senal_sin_contacto"] if (USA_ADAPTATIVO and not estado_det["fallo"]) else {"FP": True, "TP": True}
         ahora = time.time()
         vigila = hubo_datos and not cortado
-        falla_fp = vigila and contacto_fp1 > falla and contacto_fp2 > falla and conf.get("FP", True)
+        # touching_forehead: el gesto no lo mueve y la vincha sacada lo pone en 0. Se exige ademas del horseshoe y la señal.
+        # Sin dato de frente (nunca llego) no bloquea la emergencia.
+        no_toca_frente = estado_det.get("frente") != 1
+        # FP: los SIN_CONTACTO_FP_EMERGENCIA_S cuentan desde que fallan el horseshoe y la frente; la señal solo tiene que confirmarlo
+        # al final (en paralelo, no en serie): el peor caso es el mayor de los dos tiempos (~0,75 s) y no la suma (09-11)
+        falla_fp = vigila and contacto_fp1 > falla and contacto_fp2 > falla and no_toca_frente
         falla_tp = vigila and contacto_tp9 > falla and contacto_tp10 > falla and conf.get("TP", True)
         fp_falla_desde = (fp_falla_desde or ahora) if falla_fp else None
         tp_falla_desde = (tp_falla_desde or ahora) if falla_tp else None
         falla_contacto = ""
-        if fp_falla_desde is not None and ahora - fp_falla_desde >= config.SIN_CONTACTO_FP_EMERGENCIA_S:
+        # La señal solo hace falta para ENTRAR: con la vincha quieta sobre la mesa la señal se calma y la emergencia se cortaba sola (09-11)
+        if fp_falla_desde is None:
+            fp_confirmada = False
+        elif ahora - fp_falla_desde >= config.SIN_CONTACTO_FP_EMERGENCIA_S and (fp_confirmada or conf.get("FP", True)):
+            fp_confirmada = True
+        if fp_confirmada:
             falla_contacto = "FALLA DE CONTACTO (2 FP)"
         elif tp_falla_desde is not None and ahora - tp_falla_desde >= config.SIN_CONTACTO_EMERGENCIA_S:
             falla_contacto = "FALLA DE CONTACTO (2 TP)"
@@ -417,6 +439,8 @@ def hilo_procesador_bci():
         if estado == "EMERGENCIA" and estado_anterior != "EMERGENCIA":
             apagar_deteccion()
         if estado != estado_anterior:          # mensaje ESTADO en cada cambio (el suscriptor sabe en que estado esta la Pi)
+            # tambien a la consola (journalctl), para saber por que entro o quedo en EMERGENCIA sin la PC de monitoreo (09-11)
+            print(f"[ESTADO] {estado_anterior} -> {estado}" + (f" ({motivo_emergencia(cortado, control_motores.invertida, falla_contacto)})" if estado == "EMERGENCIA" else ""), flush=True)
             with zmq_lock:
                 zmq_socket.send_json({"tipo": "ESTADO", "estado": estado, "anterior": estado_anterior,
                                       "motivo": motivo_emergencia(cortado, control_motores.invertida, falla_contacto) if estado == "EMERGENCIA" else ""})

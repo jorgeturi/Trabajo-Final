@@ -12,12 +12,13 @@ oled = ssd1306.SSD1306_I2C(128, 64, i2c)
 # El UART ya recibe por interrupcion: el hardware llena un buffer circular y el programa lo lee cuando puede. Un buffer mas grande
 # aguanta que el bucle se demore (dibujar la pantalla tarda ~30 ms) sin perder bytes.
 uart_pico = UART(1, baudrate=115200, tx=Pin(4), rx=Pin(5), rxbuf=1024)
-# --- FRENOS ELECTROMAGNETICOS (GP20 = pin fisico 26) ---
-# 1 = frenos aplicados, 0 = sueltos. Arranca en 1: la plataforma queda frenada hasta que la Pi active la marcha.
+# --- FRENOS ELECTROMAGNETICOS (GP26) ---
+# 0 = frenos aplicados, 1 = sueltos (09-11: el modulo de frenos frena con 0). Lleva pull-down externo a GND
+# para que los frenos queden aplicados mientras la Pico arranca o se reinicia. Arranca en 0: la plataforma queda frenada hasta que la Pi active la marcha.
 # Se sueltan cuando llega activacion = 1 (y estado de marcha); se vuelven a aplicar recien cuando la rampa llevo avance y giro a 0.
 PIN_FRENO = 26
-FRENO_APLICADO = 1
-FRENO_SUELTO = 0
+FRENO_APLICADO = 0
+FRENO_SUELTO = 1
 pin_freno = Pin(PIN_FRENO, Pin.OUT, value=FRENO_APLICADO)
 ESTADOS_MARCHA = ("MARCHA", "MARCHA LIMITADA", "---")   # "---": la Pi no manda estado, alcanza la activacion
 
@@ -163,7 +164,13 @@ def sacar_lineas(buf, nuevos):
 # --- FIN TRAMAS ---
 
 
+# Zona de la cara que se pinta por electrodo (dibujo espejado: el oido izquierdo del usuario queda a la derecha de la pantalla)
+ZONAS_CARA = {"oido_izq": (80, 22, 6, 8), "oido_der": (42, 22, 6, 8), "cabeza_izq": (64, 16, 14, 24), "cabeza_der": (50, 16, 14, 24)}
+CORTO_CARA = {"oido_izq": "OI", "cabeza_izq": "FI", "cabeza_der": "FD", "oido_der": "OD"}   # texto corto: "Err:OI+FD"
+
+
 def dibujar_cara_espejada(sensor_fallo):
+    """sensor_fallo: tupla con los electrodos en falla (por ejemplo ("oido_izq", "cabeza_der")), o un texto ("normal", "DESC")."""
     oled.fill(0)
 
     # Textos
@@ -171,23 +178,20 @@ def dibujar_cara_espejada(sensor_fallo):
     oled.hline(0, 10, 128, 1)
 
     # Contorno y ojos
-    oled.rect(48, 20, 32, 28, 1)
-    oled.rect(42, 28, 6, 8, 1)
-    oled.rect(80, 28, 6, 8, 1)
-    oled.pixel(56, 30, 1)
-    oled.pixel(71, 30, 1)
-    oled.hline(60, 40, 8, 1)
+    oled.rect(48, 14, 32, 28, 1)   # cara 6 px mas arriba para no pisar la linea Err (09-11)
+    oled.rect(42, 22, 6, 8, 1)
+    oled.rect(80, 22, 6, 8, 1)
+    oled.pixel(56, 24, 1)
+    oled.pixel(71, 24, 1)
+    oled.hline(60, 34, 8, 1)
 
-    # --- DIBUJO INVERTIDO ---
-    if sensor_fallo == "oido_izq": oled.fill_rect(80, 28, 6, 8, 1)
-    elif sensor_fallo == "oido_der": oled.fill_rect(42, 28, 6, 8, 1)
-    elif sensor_fallo == "cabeza_izq": oled.fill_rect(64, 22, 14, 24, 1)
-    elif sensor_fallo == "cabeza_der": oled.fill_rect(50, 22, 14, 24, 1)
-    elif sensor_fallo == "ambos_oidos":
-        oled.fill_rect(42, 28, 6, 8, 1)
-        oled.fill_rect(80, 28, 6, 8, 1)
+    # --- DIBUJO INVERTIDO (espejo) --- se marcan TODOS los electrodos con falla a la vez (09-11)
+    fallas = sensor_fallo if isinstance(sensor_fallo, tuple) else ()
+    for f in fallas:
+        oled.fill_rect(*ZONAS_CARA[f], 1)
 
-    oled.text(f"Err:{sensor_fallo}", 0, 46, 1)
+    texto = "+".join(CORTO_CARA[f] for f in fallas) if fallas else sensor_fallo
+    oled.text(f"Err:{texto}", 0, 46, 1)
     # Calidad de cada electrodo (donde antes iban los motores), en el orden TP9 FP1 FP2 TP10:
     # "ok" = bien puesto (contacto 1 o 2), "__" = mal puesto (3 o 4), "??" = sin tramas de la Pi
     marcas = ["??" if estado_pi == "SIN ENLACE" else ("ok" if v <= CONTACTO_OK_MAX else "__") for v in (tp9, fp1, fp2, tp10)]
@@ -324,12 +328,9 @@ try:
                     giro_objetivo = 0.0
 
                 # Lógica de detección de error
-                if tp9 > 2 and tp10 > 2: error_actual = "ambos_oidos"
-                elif tp9 > 2: error_actual = "oido_izq"
-                elif tp10 > 2: error_actual = "oido_der"
-                elif fp1 > 2: error_actual = "cabeza_izq"
-                elif fp2 > 2: error_actual = "cabeza_der"
-                else: error_actual = "normal"
+                # todos los electrodos con falla a la vez (antes un error tapaba al otro)
+                fallas = tuple(n for n, v in (("oido_izq", tp9), ("cabeza_izq", fp1), ("cabeza_der", fp2), ("oido_der", tp10)) if v > CONTACTO_OK_MAX)
+                error_actual = fallas if fallas else "normal"
 
                 led.toggle()
 

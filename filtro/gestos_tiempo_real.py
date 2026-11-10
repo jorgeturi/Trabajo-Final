@@ -108,6 +108,7 @@ class P:
     par_comp_tp: float = 1.3
     par_fuerte_tp: float = 1.0
     fp_solo: float = 4.5
+    fp_solo_otro: float = 2.5       # regla solo frontales: el otro FP debe superar esto (dobles con pausa 55 -> 58 de 63, sin FP nuevos en las sesiones originales) (09-11)
     tp_inutil: float = 300.0
     fp_rel: float = 1.2
     parcial_umbral: float = 0.5
@@ -135,6 +136,8 @@ class P:
     acc_salto_mg: float = 1400.0    # o un salto (rango XYZ en +/- 0.25 s) de mas de esto en los ultimos 2 s
     mantener_s: float = 1.0
     n_pulsos: int = 2               # rafagas separadas que debe haber para contar un gesto (1 = desactivado)
+    reposo_s: float = 0.15          # dos rafagas son distintas solo si entre ellas los frontales quedan bajo su margen al menos esto (0 = no se exige):
+                                    # un apreton simple que se corta un instante ya no cuenta como 2 rafagas (17 simples: 3 -> 0; dobles con pausa 55/63). El doble se hace con pausa (09-11)
     sep_pulso_s: float = 0.12       # sin superacion durante este tiempo = rafagas distintas
     doble_s: float = 2.5            # las rafagas deben caer dentro de este tiempo
     consumir_pulsos: bool = True    # al contar un gesto se descartan sus rafagas: el siguiente necesita dos rafagas NUEVAS
@@ -396,6 +399,7 @@ class MotorGestos:
         self.cal_n = {c: [] for c in CAN}
         self.cal_p = {c: [] for c in CAN}
         self.ult_det = [-10 ** 9, 0.0]
+        self.fint = []                               # tramos [inicio, fin] (muestras absolutas) con algun frontal sobre el margen (para reposo_s)
         self.pulsos = []                             # rafagas [inicio, fin] (muestras absolutas) de frontal+temporal sobre el margen
         self.n_sep_pulso = int(p.sep_pulso_s * fs)
         self.consumido = -10 ** 9                    # muestra hasta la que las rafagas ya se usaron en un gesto contado
@@ -615,9 +619,11 @@ class MotorGestos:
                 via, freno = '', freno or 'coincidencia (frontal y temporal no superan el margen a la vez)'
         # solo frontales: los dos muy por encima de su margen aunque ningun temporal responda
         if not det and not debil and p.fp_solo > 0 and not ignorado['FP1'] and not ignorado['FP2']:
-            det = pico['FP1'] > p.fp_solo * margen['FP1'] and pico['FP2'] > p.fp_solo * margen['FP2']
+            # uno de los dos FP muy por encima (fp_solo) y el otro al menos fp_solo_otro: con FP1 de mal contacto casi nunca llegaban los dos (09-11)
+            _r1, _r2 = pico['FP1'] / margen['FP1'], pico['FP2'] / margen['FP2']
+            det = max(_r1, _r2) > p.fp_solo and min(_r1, _r2) > p.fp_solo_otro
             if det:
-                via = 'solo frontales (ambos 4.5 veces sobre su margen)'
+                via = 'solo frontales (uno 4.5 y el otro 2.5 veces sobre su margen)'
         # logica difusa sobre la relacion entre canales
         if det and p.difuso_canales > 0:
             rc = relaciones_canales(desp, fl, W, fs, {c: pico[c] / margen[c] for c in CAN})
@@ -695,13 +701,28 @@ class MotorGestos:
                     np.logical_or.reduce([sobre.get(c, vacio) for c in TEMPORALES])
                 if p.rescate_pulso and det and not co.any():   # ventana aceptada por una regla de rescate: su rafaga frontal cuenta como pulso
                     co = np.logical_or.reduce([sobre.get(c, vacio) for c in FRONTALES if not ignorado[c]] or [vacio])
+                if p.reposo_s > 0:                   # tramos de actividad frontal: los que se separan menos que reposo_s son el mismo tramo
+                    # los dos frontales sobre el margen (AND): un FP con mal contacto queda siempre arriba y con OR tapaba la pausa (09-11)
+                    fo = np.logical_and.reduce([sobre.get(c, vacio) for c in FRONTALES if not ignorado[c]] or [vacio])
+                    nuevo = min(self.paso, W)        # solo las muestras nuevas de esta ventana: las demas ya las vio la anterior
+                    df_ = np.diff(np.concatenate(([0], fo[-nuevo:].astype(np.int8), [0])))
+                    n_rep = int(p.reposo_s * fs)
+                    for fa, fb in zip(np.flatnonzero(df_ == 1), np.flatnonzero(df_ == -1)):
+                        fa, fb = fin - nuevo + int(fa), fin - nuevo + int(fb)
+                        if self.fint and fa - self.fint[-1][1] < n_rep:
+                            self.fint[-1][1] = max(self.fint[-1][1], fb)
+                        else:
+                            self.fint.append([fa, fb])
+                    self.fint = [q for q in self.fint if q[1] >= fin - int(2 * p.doble_s * fs)]
                 d_ = np.diff(np.concatenate(([0], co.astype(np.int8), [0])))
                 for a_, b_ in zip(np.flatnonzero(d_ == 1), np.flatnonzero(d_ == -1)):
                     a_, b_ = fin - W + int(a_), fin - W + int(b_)
                     if p.consumir_pulsos and a_ <= self.consumido:    # es (la continuacion de) una rafaga que ya se uso en un gesto
                         self.consumido = max(self.consumido, b_)
                         continue
-                    if self.pulsos and a_ - self.pulsos[-1][1] < self.n_sep_pulso:     # misma rafaga vista por otra ventana
+                    # mismo tramo frontal (sin reposo entre medio): es el mismo apreton aunque la coincidencia se haya cortado
+                    mismo_tramo = p.reposo_s > 0 and bool(self.pulsos) and any(q[0] <= self.pulsos[-1][1] and q[0] <= a_ <= q[1] for q in self.fint)
+                    if self.pulsos and (a_ - self.pulsos[-1][1] < self.n_sep_pulso or mismo_tramo):     # misma rafaga vista por otra ventana
                         self.pulsos[-1][1] = max(self.pulsos[-1][1], b_)
                     else:
                         self.pulsos.append([a_, b_])

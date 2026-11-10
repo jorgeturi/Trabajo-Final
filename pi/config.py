@@ -30,7 +30,8 @@ SUBMUESTREO_DETECTOR = 2
 # Falla de los DOS FP (FP1 y FP2) o de los DOS TP (TP9 y TP10) durante al menos este tiempo = EMERGENCIA.
 # Un gesto hace caer el contacto un instante, por eso no se declara emergencia antes.
 CONTACTO_FALLA = 2
-SIN_CONTACTO_FP_EMERGENCIA_S = 0.7   # los DOS FP en falla (y la señal lo confirma) durante esto = EMERGENCIA (vincha sacada)
+SIN_CONTACTO_FP_EMERGENCIA_S = 0.7   # los DOS FP en falla y sin tocar la frente durante esto, con la señal confirmándolo (0,75 s,
+                                     # senal_emergencia_s en detector_gestos.py) = EMERGENCIA (vincha sacada). Peor caso ~0,9 s
 SIN_CONTACTO_EMERGENCIA_S = 5.0      # los DOS TP en falla durante esto = EMERGENCIA (el horseshoe de los TP se traba en 4 seguido)
 
 # --- MARCHA LIMITADA: en MARCHA, si falla al menos 1 FP y al menos 1 TP durante LIMITADA_FALLA_S seguidos, la potencia

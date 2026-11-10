@@ -58,6 +58,7 @@ class P:
     par_comp_tp: float = 1.3
     par_fuerte_tp: float = 1.0
     fp_solo: float = 4.5
+    fp_solo_otro: float = 2.5       # regla solo frontales: el otro FP debe superar esto (dobles con pausa 55 -> 58 de 63, sin FP nuevos en las sesiones originales) (09-11)
     tp_inutil: float = 300.0
     fp_rel: float = 1.2
     parcial_umbral: float = 0.5
@@ -85,6 +86,8 @@ class P:
     acc_salto_mg: float = 1400.0    # o un salto (rango XYZ en +/- 0.25 s) de mas de esto en los ultimos 2 s
     mantener_s: float = 1.0
     n_pulsos: int = 2               # rafagas separadas que debe haber para contar un gesto (1 = desactivado)
+    reposo_s: float = 0.15          # dos rafagas son distintas solo si entre ellas los frontales quedan bajo su margen al menos esto (0 = no se exige):
+                                    # un apreton simple que se corta un instante ya no cuenta como 2 rafagas (17 simples: 3 -> 0; dobles con pausa 55/63). El doble se hace con pausa (09-11)
     sep_pulso_s: float = 0.12       # sin superacion durante este tiempo = rafagas distintas
     doble_s: float = 2.5            # las rafagas deben caer dentro de este tiempo
     consumir_pulsos: bool = True    # al contar un gesto se descartan sus rafagas: el siguiente necesita dos rafagas NUEVAS
@@ -96,6 +99,8 @@ class P:
     confirmar_senal: bool = True    # el sin contacto del horseshoe solo vale si la señal tambien lo confirma (el horseshoe a veces se traba en 4)
     senal_sin_contacto_uv: float = 60.0  # RMS 8-30 Hz (ventana de 0.5 s) del MENOR del par por encima de esto, durante contacto_min_s seguidos,
                                     # = par sin contacto. Sin vincha da ~240 uV (99 % > 100); puesta ~5 uV y los gestos no lo sostienen 1.5 s (06-11)
+    senal_emergencia_s: float = 0.75  # para la EMERGENCIA por contacto (stream.py) alcanza con que la señal lo confirme esto (3 pasos):
+                                    # el horseshoe y touching_forehead ya filtran los gestos; el bloqueo de gestos sigue con contacto_min_s (09-11)
     rearme_s: float = 1.0           # tras volver el contacto sigue bloqueado este tiempo (el asentamiento de la vincha da artefactos)
     reinicio_s: float = 3.0         # si estuvo sin contacto al menos esto, al volver se vuelve a calibrar (la señal y el ruido son otros)
     bloquear_calibracion: bool = True   # mientras calibra (arranque o reinicio) no se detecta: el margen de partida es solo un valor provisorio
@@ -346,12 +351,14 @@ class MotorGestos:
         self.cal_n = {c: [] for c in CAN}
         self.cal_p = {c: [] for c in CAN}
         self.ult_det = [-10 ** 9, 0.0]
+        self.fint = []                               # tramos [inicio, fin] (muestras absolutas) con algun frontal sobre el margen (para reposo_s)
         self.pulsos = []                             # rafagas [inicio, fin] (muestras absolutas) de frontal+temporal sobre el margen
         self.n_sep_pulso = int(p.sep_pulso_s * fs)
         self.consumido = -10 ** 9                    # muestra hasta la que las rafagas ya se usaron en un gesto contado
         self.sin_cont_desde = None                   # muestra desde la que los dos frontales estan sin contacto (None = hay contacto o no se sabe)
         self.cuenta_senal_off = {'FP': 0, 'TP': 0}   # ventanas seguidas en las que la señal del par parece sin contacto
         self.senal_off = {'FP': False, 'TP': False}  # la señal confirma par sin contacto (sostenido contacto_min_s)
+        self.senal_off_em = {'FP': False, 'TP': False}  # idem, sostenido senal_emergencia_s: lo que usa stream.py para la EMERGENCIA
         self.sin_frente_desde = None                 # muestra desde la que touching_forehead vale 0 (vincha fuera de la frente)
         self.sin_vincha_desde = None                 # muestra desde la que se considera la vincha sacada (sin contacto sostenido)
         self.rearme_hasta = -1                       # muestra hasta la que sigue bloqueado despues de volver el contacto
@@ -497,6 +504,7 @@ class MotorGestos:
             rms = min(float(np.sqrt(np.mean(np.square(desp['SIG_' + c][fl - W:fl])))) for c in (a_, b_))
             self.cuenta_senal_off[par] = self.cuenta_senal_off[par] + 1 if rms > p.senal_sin_contacto_uv else 0
             self.senal_off[par] = self.cuenta_senal_off[par] >= k_off
+            self.senal_off_em[par] = self.cuenta_senal_off[par] >= max(1, int(round(p.senal_emergencia_s / p.paso_s)))
         # vincha puesta o no: sin contacto en los dos frontales, o touching_forehead en 0, durante al menos una ventana
         # (y, con confirmar_senal, que la señal de los frontales tambien parezca sin contacto)
         sin_cont = p.exigir_contacto and ((self.sin_cont_desde is not None and fin - self.sin_cont_desde >= self.n_cont) or
@@ -565,9 +573,11 @@ class MotorGestos:
                 via, freno = '', freno or 'coincidencia (frontal y temporal no superan el margen a la vez)'
         # solo frontales: los dos muy por encima de su margen aunque ningun temporal responda
         if not det and not debil and p.fp_solo > 0 and not ignorado['FP1'] and not ignorado['FP2']:
-            det = pico['FP1'] > p.fp_solo * margen['FP1'] and pico['FP2'] > p.fp_solo * margen['FP2']
+            # uno de los dos FP muy por encima (fp_solo) y el otro al menos fp_solo_otro: con FP1 de mal contacto casi nunca llegaban los dos (09-11)
+            _r1, _r2 = pico['FP1'] / margen['FP1'], pico['FP2'] / margen['FP2']
+            det = max(_r1, _r2) > p.fp_solo and min(_r1, _r2) > p.fp_solo_otro
             if det:
-                via = 'solo frontales (ambos 4.5 veces sobre su margen)'
+                via = 'solo frontales (uno 4.5 y el otro 2.5 veces sobre su margen)'
         # logica difusa sobre la relacion entre canales
         if det and p.difuso_canales > 0:
             rc = relaciones_canales(desp, fl, W, fs, {c: pico[c] / margen[c] for c in CAN})
@@ -645,13 +655,28 @@ class MotorGestos:
                     np.logical_or.reduce([sobre.get(c, vacio) for c in TEMPORALES])
                 if p.rescate_pulso and det and not co.any():   # ventana aceptada por una regla de rescate: su rafaga frontal cuenta como pulso
                     co = np.logical_or.reduce([sobre.get(c, vacio) for c in FRONTALES if not ignorado[c]] or [vacio])
+                if p.reposo_s > 0:                   # tramos de actividad frontal: los que se separan menos que reposo_s son el mismo tramo
+                    # los dos frontales sobre el margen (AND): un FP con mal contacto queda siempre arriba y con OR tapaba la pausa (09-11)
+                    fo = np.logical_and.reduce([sobre.get(c, vacio) for c in FRONTALES if not ignorado[c]] or [vacio])
+                    nuevo = min(self.paso, W)        # solo las muestras nuevas de esta ventana: las demas ya las vio la anterior
+                    df_ = np.diff(np.concatenate(([0], fo[-nuevo:].astype(np.int8), [0])))
+                    n_rep = int(p.reposo_s * fs)
+                    for fa, fb in zip(np.flatnonzero(df_ == 1), np.flatnonzero(df_ == -1)):
+                        fa, fb = fin - nuevo + int(fa), fin - nuevo + int(fb)
+                        if self.fint and fa - self.fint[-1][1] < n_rep:
+                            self.fint[-1][1] = max(self.fint[-1][1], fb)
+                        else:
+                            self.fint.append([fa, fb])
+                    self.fint = [q for q in self.fint if q[1] >= fin - int(2 * p.doble_s * fs)]
                 d_ = np.diff(np.concatenate(([0], co.astype(np.int8), [0])))
                 for a_, b_ in zip(np.flatnonzero(d_ == 1), np.flatnonzero(d_ == -1)):
                     a_, b_ = fin - W + int(a_), fin - W + int(b_)
                     if p.consumir_pulsos and a_ <= self.consumido:    # es (la continuacion de) una rafaga que ya se uso en un gesto
                         self.consumido = max(self.consumido, b_)
                         continue
-                    if self.pulsos and a_ - self.pulsos[-1][1] < self.n_sep_pulso:     # misma rafaga vista por otra ventana
+                    # mismo tramo frontal (sin reposo entre medio): es el mismo apreton aunque la coincidencia se haya cortado
+                    mismo_tramo = p.reposo_s > 0 and bool(self.pulsos) and any(q[0] <= self.pulsos[-1][1] and q[0] <= a_ <= q[1] for q in self.fint)
+                    if self.pulsos and (a_ - self.pulsos[-1][1] < self.n_sep_pulso or mismo_tramo):     # misma rafaga vista por otra ventana
                         self.pulsos[-1][1] = max(self.pulsos[-1][1], b_)
                     else:
                         self.pulsos.append([a_, b_])
@@ -744,7 +769,7 @@ class MotorGestos:
             if det:
                 self.v_det[np.arange(fin - W, fin) % self.R] = True
         previo = int(p.n_pulsos > 1 and any(q[1] >= fin - int(p.doble_s * fs) for q in self.pulsos))     # 1 = hay un gesto esperando su pareja
-        self.ultima = {'senal_off': dict(self.senal_off), 'fin': fin, 't': fin / fs, 'det': det, 'calibrando': calibrando, 'ratios': ratios, 'votos': votos, 'previo': previo,
+        self.ultima = {'senal_off': dict(self.senal_off), 'senal_off_em': dict(self.senal_off_em), 'fin': fin, 't': fin / fs, 'det': det, 'calibrando': calibrando, 'ratios': ratios, 'votos': votos, 'previo': previo,
                        'margen': dict(margen), 'ignorado': dict(ignorado), 'via': via if det else '', 'freno': '' if det else freno,
                        'estado': estado}
         return self.ultima
@@ -793,7 +818,7 @@ class DetectorGestos:
                 "margen": {c: round(float(d['margen'][c]), 1) for c in CAN},
                 "ratios": {c: round(float(d['ratios'][c]), 2) for c in CAN},
                 "ignorado": {c: bool(d['ignorado'][c]) for c in CAN},
-                "senal_sin_contacto": dict(d.get('senal_off', {'FP': True, 'TP': True}))})   # stream.py lo usa para confirmar la EMERGENCIA por contacto
+                "senal_sin_contacto": {'FP': d.get('senal_off_em', {}).get('FP', True), 'TP': d.get('senal_off', {}).get('TP', True)}})   # stream.py lo usa para confirmar la EMERGENCIA por contacto
         return paquetes
 
     def acc(self, x, y, z, t=None):
