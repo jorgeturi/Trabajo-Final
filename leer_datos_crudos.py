@@ -23,7 +23,7 @@ CANALES = ['TP9', 'FP1', 'FP2', 'TP10']
 # ==========================================
 # 2. CARGAR Y REVISAR DATOS
 # ==========================================
-print(f"📂 Cargando archivo: {ARCHIVO_CSV}")
+print(f" Cargando archivo: {ARCHIVO_CSV}")
 df = pd.read_csv(ARCHIVO_CSV)
 
 # Ajustar tiempo relativo en segundos (empieza en 0)
@@ -43,7 +43,7 @@ TIEMPO_FIN = 250.0
 df_franja = df[(df['Tiempo_s'] >= TIEMPO_INICIO) & (df['Tiempo_s'] <= TIEMPO_FIN)].copy()
 
 if df_franja.empty:
-    print("⚠️ La franja de tiempo seleccionada no tiene datos. Usando todo el dataset.")
+    print(" La franja de tiempo seleccionada no tiene datos. Usando todo el dataset.")
     df_franja = df.copy()
 
 print(f"\n--- Imprimiendo franja temporal ({TIEMPO_INICIO}s a {TIEMPO_FIN}s) ---")
@@ -229,9 +229,9 @@ if mask_gestos.any():
         plt.tight_layout()
         plt.show()
     else:
-        print("⚠️ Los segmentos de gestos juntos son muy cortos para calcular el espectro con Welch.")
+        print(" Los segmentos de gestos juntos son muy cortos para calcular el espectro con Welch.")
 else:
-    print("⚠️ No hay datos con Trigger == 1 en la franja seleccionada para calcular el espectro de gestos.")
+    print(" No hay datos con Trigger == 1 en la franja seleccionada para calcular el espectro de gestos.")
 
 
 
@@ -307,7 +307,7 @@ fp_mascara = deteccion_global & fuera_de_trigger
 _, num_fps = label(fp_mascara.astype(int))
 
 print("\n==========================================")
-print("📊 RESULTADOS CON LÓGICA ESTRICTA MUESTRA A MUESTRA")
+print(" RESULTADOS CON LÓGICA ESTRICTA MUESTRA A MUESTRA")
 print(f"==========================================")
 print(f"Gestos reales (Triggers):          {num_gestos_reales}")
 print(f"Verdaderos Positivos (DENTRO):     {tp_count}")

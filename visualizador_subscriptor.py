@@ -51,7 +51,7 @@ win = pg.GraphicsLayoutWidget(show=True, title="BCI TuJo - Panel Completo (8 Cur
 win.resize(1200, 900)
 
 # Barra de estado superior (Batería y Acelerómetro resumido)
-estado_label = win.addLabel("🔋 Batería: --%  |  IMU -> X: -- | Y: -- | Z: --", col=0, colspan=1, size="13pt", color="w")
+estado_label = win.addLabel(" Batería: --%  |  IMU -> X: -- | Y: -- | Z: --", col=0, colspan=1, size="13pt", color="w")
 win.nextRow()
 
 canales = ["TP9", "FP1", "FP2", "TP10"]
@@ -120,7 +120,7 @@ def actualizar():
             curvas_raw[ch].setData(datos_raw[ch])
             curvas_filt[ch].setData(datos_filt[ch])
             
-        estado_label.setText(f"🔋 Batería: {bateria_actual}%  |  IMU -> {imu_texto}")
+        estado_label.setText(f" Batería: {bateria_actual}%  |  IMU -> {imu_texto}")
 
 timer = QtCore.QTimer()
 timer.timeout.connect(actualizar)

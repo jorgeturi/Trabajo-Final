@@ -10,14 +10,14 @@ def handler_parpadeo(address, *args):
     valor = args[0]
     if valor == 1 or valor == 1.0:
         print("\n" + "="*50)
-        print("👁️  [!!!] EVENTO DETECTADO: PARPADEO")
+        print("  [!!!] EVENTO DETECTADO: PARPADEO")
         print("="*50 + "\n")
 
 def handler_mandibula(address, *args):
     valor = args[0]
     if valor == 1 or valor == 1.0:
         print("\n" + "="*50)
-        print("🦷  [!!!] EVENTO DETECTADO: MANDÍBULA APRETADA")
+        print("  [!!!] EVENTO DETECTADO: MANDÍBULA APRETADA")
         print("="*50 + "\n")
 
 # --- HANDLER PARA EL RESTO DEL PAQUETE ---

@@ -13,7 +13,7 @@ sock.connect(f"tcp://{IP_RASPBERRY}:5555")
 # 3. Suscribirse a TODOS los mensajes (dejamos el filtro vacío)
 sock.setsockopt_string(zmq.SUBSCRIBE, "")
 
-print(f"📡 Conectado a la Raspberry Pi en {IP_RASPBERRY}:5555")
+print(f" Conectado a la Raspberry Pi en {IP_RASPBERRY}:5555")
 print("Esperando stream de datos JSON...\n")
 
 try:

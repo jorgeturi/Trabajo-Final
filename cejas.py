@@ -43,7 +43,7 @@ def iniciar_osc():
 
 def detector_blindado_tp9():
     print("==================================================")
-    print("🧠 BCI - Modo Seguro (Anti-Rebote + Veto de Alta Freq)")
+    print(" BCI - Modo Seguro (Anti-Rebote + Veto de Alta Freq)")
     print("==================================================\n")
     
     global ultimo_disparo, frames_activos
@@ -77,14 +77,14 @@ def detector_blindado_tp9():
                 frames_activos += 1
             else:
                 frames_activos = 0
-                alerta = "⚠️ VETO ACTIVO (Ruido)"
+                alerta = " VETO ACTIVO (Ruido)"
         else:
             frames_activos = 0
 
         # Disparo final
         if frames_activos >= FRAMES_REQUERIDOS:
             if (tiempo_actual - ultimo_disparo) > COOLDOWN:
-                alerta = "🟢 ¡COMANDO SEGURO CONFIRMADO! 🟢"
+                alerta = " ¡COMANDO SEGURO CONFIRMADO! "
                 ultimo_disparo = tiempo_actual
                 frames_activos = 0 # Reiniciar contador tras disparo
                 

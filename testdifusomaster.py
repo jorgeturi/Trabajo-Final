@@ -67,7 +67,7 @@ def depurador_final():
     global analizando_forma, pico_transitorio, frames_transitorio
     
     print("=======================================================================================")
-    print("🧠 BCI ESP32 - Calibración Final (Gestos Suaves + Veto Dual)")
+    print(" BCI ESP32 - Calibración Final (Gestos Suaves + Veto Dual)")
     print("Formato: E=Energía Absoluta | B=Base Blindada | R=Ratio Multiplicativo")
     print("=======================================================================================\n")
     
@@ -108,30 +108,30 @@ def depurador_final():
                     
                     # 1. VETO ESPACIAL DUAL
                     if energias_actuales[1] > UMBRAL_VETO_FRONTAL or energias_actuales[3] > UMBRAL_VETO_LATERAL:
-                        estado_sensor = "🚫 VETADO (Impacto en Vincha)"
+                        estado_sensor = " VETADO (Impacto en Vincha)"
                         analizando_forma = False
                         ultimo_disparo[i] = tiempo_actual
                     
                     # 2. TIMEOUT (Movimiento lento o tensión)
                     elif frames_transitorio >= TIMEOUT_FRAMES:
-                        estado_sensor = "❌ DESCARTADO (Lento)"
+                        estado_sensor = " DESCARTADO (Lento)"
                         analizando_forma = False
                         ultimo_disparo[i] = tiempo_actual
                     
                     # 3. ÉXITO (Caída del 30%)
                     elif energia_actual < (pico_transitorio * 0.7):
                         comando_silla = True
-                        estado_sensor = f"✅ AUTORIZADA (Pico: {pico_transitorio:.0f})"
+                        estado_sensor = f" AUTORIZADA (Pico: {pico_transitorio:.0f})"
                         analizando_forma = False
                         ultimo_disparo[i] = tiempo_actual
                         
                     else:
-                        estado_sensor = f"🔍 BUSCANDO CAÍDA ({frames_transitorio}/{TIMEOUT_FRAMES})"
+                        estado_sensor = f" BUSCANDO CAÍDA ({frames_transitorio}/{TIMEOUT_FRAMES})"
                         
                 elif (tiempo_actual - ultimo_disparo[i]) < TIEMPO_COOLDOWN:
-                    estado_sensor = "⏳ ENFRIAM "
+                    estado_sensor = " ENFRIAM "
                 elif energia_actual > TECHO_SATURACION:
-                    estado_sensor = "⚠️ SATURAC"
+                    estado_sensor = " SATURAC"
                 
                 # --- LÓGICA DE BLINDAJE DE BASE ---
                 elif energia_actual < UMBRAL_RUIDO_BASE:
@@ -147,18 +147,18 @@ def depurador_final():
                         analizando_forma = True
                         pico_transitorio = energia_actual
                         frames_transitorio = 1
-                        estado_sensor = "⚠️ INICIANDO ANÁLISIS"
+                        estado_sensor = " INICIANDO ANÁLISIS"
                     else:
                         estado_sensor = "  evaluando"
                         
-                interfaz += f"⭐ {nombres[i]}: (E:{energia_actual:4.0f} | B:{energia_base:4.0f} | R:{ratio_energia:4.1f}x) {estado_sensor} | "
+                interfaz += f" {nombres[i]}: (E:{energia_actual:4.0f} | B:{energia_base:4.0f} | R:{ratio_energia:4.1f}x) {estado_sensor} | "
             else:
                 interfaz += f"{nombres[i]}: (E:{energia_actual:4.0f} | R:{ratio_energia:4.1f}x) | "
             
         if comando_silla:
-            interfaz += " 🚀🚀 SILLA EN MOVIMIENTO 🚀🚀"
+            interfaz += "  SILLA EN MOVIMIENTO "
             
-        if "⭐ TP9:" in interfaz: 
+        if " TP9:" in interfaz: 
             sys.stdout.write(interfaz + "\n")
             sys.stdout.flush()
             

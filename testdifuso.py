@@ -45,7 +45,7 @@ def iniciar_osc():
 
 def depurador_blindado_log():
     print("=======================================================================================")
-    print("🧠 BCI - Modo Log Continuo (Para Depuración)")
+    print(" BCI - Modo Log Continuo (Para Depuración)")
     print("Formato: Certeza% (Energía Absoluta / Ratio Relativo) Estado")
     print("=======================================================================================\n")
     
@@ -77,17 +77,17 @@ def depurador_blindado_log():
             certeza = 0.0
             
             if energia_actual > TECHO_SATURACION:
-                estado = "⚠️ SATURAC"
+                estado = " SATURAC"
             elif energia_actual < UMBRAL_ENERGIA_MINIMA:
                 estado = "  silencio"
                 historial_fft[i].append(fft_actual) 
             elif (tiempo_actual - ultimo_disparo[i]) < TIEMPO_COOLDOWN:
-                estado = "⏳ ENFRIAM "
+                estado = " ENFRIAM "
             else:
                 certeza = inferencia_difusa(ratio_energia, coherencia_actual)
                 
                 if certeza > 75.0:
-                    estado = "🟢 CEJAS! "
+                    estado = " CEJAS! "
                     ultimo_disparo[i] = tiempo_actual
                 else:
                     estado = "  evaluando"

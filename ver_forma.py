@@ -101,7 +101,7 @@ def analizar_ventanas_mejorado(ruta_csv):
     # Guardar la imagen en alta resolución
     nombre_salida = 'grafico_erp_alineado_limpio.png'
     plt.savefig(nombre_salida, bbox_inches='tight', dpi=300)
-    print(f"✅ Gráfico guardado exitosamente como '{nombre_salida}'. ¡Abre este archivo para verlo nítido!")
+    print(f" Gráfico guardado exitosamente como '{nombre_salida}'. ¡Abre este archivo para verlo nítido!")
     
     # Mostrar en pantalla (aunque se vea mal en tu editor, el PNG estará perfecto)
     plt.show()

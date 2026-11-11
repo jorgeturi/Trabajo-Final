@@ -121,7 +121,7 @@ timer = QtCore.QTimer()
 timer.timeout.connect(actualizar_interfaz)
 timer.start(16)
 
-print(f"📡 Conectado a {IP_RASPBERRY}:5555. Abriendo dashboard...")
+print(f" Conectado a {IP_RASPBERRY}:5555. Abriendo dashboard...")
 
 if __name__ == '__main__':
     sys.exit(app.exec_())

@@ -63,9 +63,9 @@ def analizar_ventana():
     estado = "REPOSO"
     
     if energia_frente > UMBRAL_CEJAS_FRENTE:
-        estado = "⚠️ LEVANTAR CEJAS / ARTEFACTO (Ignorar)"
+        estado = " LEVANTAR CEJAS / ARTEFACTO (Ignorar)"
     elif energia_mandibula > UMBRAL_MANDIBULA and energia_frente < LIMITE_FRENTE_MANDIBULA:
-        estado = "✅ MORDIDA DETECTADA (Enviar Trigger)"
+        estado = " MORDIDA DETECTADA (Enviar Trigger)"
         
     # Imprimimos en consola sobreescribiendo la misma línea (con los valores crudos para que puedas calibrar)
     sys.stdout.write(f"\rEstado: {estado:<45} | Frente: {int(energia_frente):<6} | Mandíbula: {int(energia_mandibula):<6}")
