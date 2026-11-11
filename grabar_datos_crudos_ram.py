@@ -8,7 +8,7 @@ from pythonosc import dispatcher, osc_server
 # ==========================================
 # CONFIGURACION DEL EXPERIMENTO
 # ==========================================
-nombre_movimiento = "vincha sacada v3 9-11"
+nombre_movimiento = "gestos exagerados cejas 11-11"
 frecuencia_teorica = 220.0
 
 # Variables globales compartidas

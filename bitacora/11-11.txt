@@ -1,0 +1,48 @@
+Prueba 1: cejas exageradas
+Archivo: dataset_pi_gestos_exagerados_cejas_11-11_1794405385_*
+Duración 439 s, 42 bloques marcados, 1792 ventanas.
+
+Resultado: 41/42 detectados, 0 falsos positivos.
+Vías: casi todas por la regla base (frontal + temporal sobre su margen); 4 por "solo frontales", 1 por "incremento parcial", 1 por "crecimiento del temporal".
+Estados: cada par de gestos alternó REPOSO <-> MARCHA, sin cambios espurios. Una MARCHA LIMITADA de 0,5 s a los 162 s (falla parcial de contacto).
+Tiempo real: cálculo por ventana 12 ms de mediana, 80 ms máximo (sobre 250 ms disponibles); cola máxima 1.
+Contacto: los primeros ~70 s TP9 y TP10 estuvieron casi siempre con horseshoe 4 (mal contacto). Igual detectó.
+
+Gesto perdido (bloque 347,5–351,0 s):
+348,2 s: el detector ve la primera ráfaga y espera la segunda ("un solo pulso").
+348,3–349,5 s: el gesto exagerado mueve la vincha. La señal cruda llega a 0 µV en 3–4 canales y el horseshoe pasa a 4-4-4-4. Actúa el veto de saturación (se interpreta como pérdida de contacto, no como gesto).
+349,3 s: los umbrales saltan de ~30–175 µV a 320–650 µV porque esos picos entran como ruido reciente; durante ~2 s nada puede superarlos.
+Conclusión: el sistema hizo lo que tenía que hacer. Un gesto tan brusco que mueve la vincha se descarta.
+
+------------------------------------------------------------
+Prueba 2: parpadeos exagerados
+Archivo: dataset_pi_gestos_exagerados_parpadeos_11-11_1794406361_*
+Duración 251 s, 30 bloques marcados, 1027 ventanas.
+
+Resultado: 27/30 detectados, 1 falso positivo.
+Vías: 25 por la regla base, 5 por "incremento parcial", 5 por "crecimiento del temporal". Con parpadeos los temporales responden menos que con cejas, por eso entran más por rescates.
+Tiempo real: 12 ms de mediana, 91 ms máximo; cola máxima 1.
+Contacto: FP1 estuvo gran parte de la sesión con horseshoe 4 o 2 y el detector lo ignoró en 341 ventanas (un tercio de la sesión). Con FP1 ignorado queda un solo frontal, lo que hace más difícil cumplir las reglas.
+
+Gestos perdidos:
+- Bloque 111,0–113,4 s y bloque 127,2–130,2 s: freno "fuerza baja" (frontal x temporal entre 1,2 y 2,3, por debajo de 2,5). Los temporales casi no acompañaron al parpadeo.
+- Bloque 195,8–199,1 s: freno "un solo pulso". Se vio la primera ráfaga, pero la segunda no alcanzó el umbral dentro de los 2,5 s.
+
+Falso positivo a los 79,4 s (me estaba acomodando la vincha, fuera de cualquier bloque marcado):
+- Estado previo: MARCHA (activación 1). El falso positivo la pasó a REPOSO, o sea, en el sentido seguro (apagó, no prendió).
+- Señal: solo FP1 se movió. Filtrado de FP1 entre 150 y 320 µV desde los 78,5 s, mientras FP2 quedaba en 3–9 µV y TP9/TP10 en 15–40 µV. Horseshoe 1-2-1-1 (FP1 con contacto regular). Es el artefacto de mover la vincha sobre la frente izquierda.
+- Ventanas (cada fila analiza los últimos 0,5 s; ratio = pico / umbral del canal):
+    78,99 s  FP1 1,18  FP2 0,36  TP9 0,51  TP10 0,28  -> no
+    79,21 s  FP1 1,19  FP2 0,33  TP9 0,38  TP10 0,22  -> no
+    79,40 s  FP1 2,08  FP2 0,36  TP9 0,51  TP10 0,75  -> DETECTA, vía "crecimiento del temporal"
+    79,76 s  FP1 2,50  FP2 0,43  TP9 0,52  TP10 0,68  -> no
+    80,15 s  en adelante: el umbral de FP1 sube a 580–730 µV y FP1 pasa a ignorado.
+  Umbrales en la ventana de 79,40 s: TP9 63,9, FP1 126,8, FP2 20,0, TP10 60,1 µV.
+- Por qué pasó: la regla de rescate "crecimiento del temporal" acepta si UN frontal supera 2 veces su umbral y un temporal supera 1,3 veces su mayor pico de ruido reciente. FP1 llegó a 2,08 y TP10 subió por encima de su ruido reciente (aunque solo a 0,75 de su umbral). Ese rescate no exige que el otro frontal (FP2) acompañe, así que la regla de pares no lo frenó.
+
+------------------------------------------------------------
+Resumen del día
+- 68 de 72 gestos detectados (94 %), 1 falso positivo en ~11,5 minutos de grabación (por acomodar vincha, no de la nada).
+- El detector funciona en tiempo real con margen (máximo 91 ms por ventana sobre 250 ms).
+- Los fallos tienen causa identificada: gesto que mueve la vincha (veto de saturación), temporales que no acompañan al parpadeo (fuerza baja) y segunda ráfaga débil.
+- El único falso positivo fue al acomodar la vincha y entró por un rescate que acepta un solo frontal.
