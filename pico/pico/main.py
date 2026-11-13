@@ -27,10 +27,10 @@ ESTADOS_MARCHA = ("MARCHA", "MARCHA LIMITADA", "---")   # "---": la Pi no manda 
 # Los pines GP16 y GP17 siguen siendo los de avance de cada motor; GP18 y GP19 son los NUEVOS de retroceso (revisar el cableado).
 PIN_IZQ_ADELANTE, PIN_IZQ_ATRAS = 18, 20
 PIN_DER_ADELANTE, PIN_DER_ATRAS = 19, 21
-INVERTIR_IZQ = False             # True si al avanzar el motor izquierdo gira al reves
-INVERTIR_DER = False
+INVERTIR_IZQ = True             # True si al avanzar el motor izquierdo gira al reves
+INVERTIR_DER = True
 FREQ_PWM = 21000
-PWM_MAX = 16000                  # duty maximo (0-65535) cuando la Pi manda 100 o -100. Subirlo de a poco en las pruebas
+PWM_MAX = 40000                  # duty maximo (0-65535) cuando la Pi manda 100 o -100. Subirlo de a poco en las pruebas
 TIEMPO_MUERTO_MS = 40            # al invertir el sentido de un motor, los dos pines quedan en 0 este tiempo antes de usar el otro
 TIEMPO_RAMPA_S = 1.5             # segundos para ir de 0 a PWM_MAX (invertir el sentido a fondo tarda el doble)
 
@@ -44,8 +44,8 @@ for p in (izq_av, izq_at, der_av, der_at):
 # Compensacion de ruedas desbalanceadas: multiplica el duty de cada motor. Bajar (por ejemplo 0.92) el de la rueda que anda mas rapido;
 # conviene dejar la mas lenta en 1.0 para no pasar PWM_MAX. Se ajusta probando avance recto en el piso (giro 0) y corrigiendo hasta que no se desvie.
 COMPENSACION_IZQ = 1.0
-COMPENSACION_DER = 1.0
-GANANCIA_GIRO = 1.0              # 1.0 = el giro pesa igual que el avance; menor = giros mas suaves
+COMPENSACION_DER = 0.8
+GANANCIA_GIRO = 0.3              # 1.0 = el giro pesa igual que el avance; menor = giros mas suaves
 
 # La Pi manda OBJETIVOS de avance y giro (porcentaje con signo). La Pico lleva los valores ACTUALES y los acerca de a poco:
 # la rampa es sobre avance y giro (no sobre cada rueda), asi la proporcion entre los dos se mantiene mientras arranca.
@@ -412,4 +412,5 @@ try:
             time.sleep(0.05)
 finally:
     parar_todo()                         # al detener el programa (Ctrl+C en Thonny) los motores no quedan andando
+
 

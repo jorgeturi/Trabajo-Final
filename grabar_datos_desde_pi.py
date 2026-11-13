@@ -28,7 +28,7 @@ import zmq
 # ==========================================
 IP_RASPBERRY = "192.168.1.50"
 PUERTO_ZMQ = 5555
-nombre_movimiento = "gestos exagerados parpadeos 11-11"
+nombre_movimiento = "gestos suaves cejas 11-11"
 
 CANALES = ['TP9', 'FP1', 'FP2', 'TP10']
 prefijo = f"dataset_pi_{nombre_movimiento.replace(' ', '_')}_{int(time.time())}"

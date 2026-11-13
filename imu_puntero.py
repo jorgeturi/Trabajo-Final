@@ -26,7 +26,7 @@ badge_label = win.addLabel("Monitor ZMQ - Mostrando datos procesados por el Cont
 win.nextRow()
 
 # --- PANEL IZQUIERDO: SIMULADOR DE PUNTERO DOBLE ---
-p_plot = win.addPlot(title="Simulador: Crudo (Rojo) vs Filtrado (Azul)")
+p_plot = win.addPlot(title="Datos intencion: Crudo (Rojo) vs Filtrado (Azul)")
 p_plot.showGrid(x=True, y=True, alpha=0.4)
 p_plot.addLegend()
 
